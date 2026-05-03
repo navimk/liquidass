@@ -63,6 +63,7 @@
 "prefs.font_style.current.title" = "Thường";
 "prefs.font_style.rounded.title" = "Bo tròn";
 "prefs.subtitle.global_enabled" = "Công tắc chính cho mọi bề mặt.";
+"prefs.root.runtime_cache_footer" = "%@ đã lưu vào RAM";
 
 "prefs.rendering.snapshot.title" = "Ảnh chụp";
 "prefs.rendering.live_capture.title" = "Chụp trực tiếp";

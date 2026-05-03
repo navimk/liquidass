@@ -323,6 +323,9 @@ static NSString * const kLGContextMenuSnapshotImageCacheKey = @"context.snapshot
 static NSString * const kLGFolderSnapshotImageCacheKey = @"folder.snapshot";
 static NSString * const kLGHomeWallpaperImageCacheKey = @"wallpaper.home";
 static NSString * const kLGLockWallpaperImageCacheKey = @"wallpaper.lock";
+static NSString * const kLGRuntimeCacheUsageBytesKey = @"__runtime_cache_usage_bytes";
+static unsigned long long sLastPublishedRuntimeCacheUsageBytes = ULLONG_MAX;
+static UIImage *LGGetCachedTransientImage(NSString *key);
 
 static NSCache<NSString *, UIImage *> *LGTransientImageCache(void) {
     static dispatch_once_t onceToken;
@@ -345,6 +348,37 @@ static NSUInteger LGImageMemoryCost(UIImage *image) {
     return (NSUInteger)lrint(width * height * 4.0);
 }
 
+static unsigned long long LGRuntimeImageCacheUsageBytes(void) {
+    NSMutableSet<NSValue *> *seenImages = [NSMutableSet set];
+    unsigned long long total = 0;
+    UIImage *images[] = {
+        LGGetCachedTransientImage(kLGSnapshotImageCacheKey),
+        LGGetCachedTransientImage(kLGContextMenuSnapshotImageCacheKey),
+        LGGetCachedTransientImage(kLGFolderSnapshotImageCacheKey),
+        LGGetCachedTransientImage(kLGHomeWallpaperImageCacheKey),
+        LGGetCachedTransientImage(kLGLockWallpaperImageCacheKey)
+    };
+    for (NSUInteger i = 0; i < (sizeof(images) / sizeof(images[0])); i++) {
+        UIImage *image = images[i];
+        if (!image) continue;
+        NSValue *identity = [NSValue valueWithNonretainedObject:image];
+        if ([seenImages containsObject:identity]) continue;
+        [seenImages addObject:identity];
+        total += (unsigned long long)LGImageMemoryCost(image);
+    }
+    return total;
+}
+
+static void LGPublishRuntimeCacheUsageEstimate(void) {
+    unsigned long long total = LGRuntimeImageCacheUsageBytes();
+    if (total == sLastPublishedRuntimeCacheUsageBytes) return;
+    sLastPublishedRuntimeCacheUsageBytes = total;
+    CFPreferencesSetAppValue((__bridge CFStringRef)kLGRuntimeCacheUsageBytesKey,
+                             (__bridge CFPropertyListRef)@(total),
+                             (__bridge CFStringRef)LGPrefsDomain);
+    CFPreferencesAppSynchronize((__bridge CFStringRef)LGPrefsDomain);
+}
+
 static void LGSetCachedTransientImage(NSString *key, UIImage *image) {
     if (!key.length) return;
     NSCache<NSString *, UIImage *> *cache = LGTransientImageCache();
@@ -353,6 +387,7 @@ static void LGSetCachedTransientImage(NSString *key, UIImage *image) {
     } else {
         [cache removeObjectForKey:key];
     }
+    LGPublishRuntimeCacheUsageEstimate();
 }
 
 static UIImage *LGGetCachedTransientImage(NSString *key) {

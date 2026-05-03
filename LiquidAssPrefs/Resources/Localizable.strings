@@ -97,6 +97,7 @@
 "prefs.font_style.current.title" = "Regular";
 "prefs.font_style.rounded.title" = "Rounded";
 "prefs.subtitle.global_enabled" = "Master switch for every surface.";
+"prefs.root.runtime_cache_footer" = "%@ cached to RAM";
 
 "prefs.rendering.snapshot.title" = "Snapshot";
 "prefs.rendering.live_capture.title" = "Live Capture";

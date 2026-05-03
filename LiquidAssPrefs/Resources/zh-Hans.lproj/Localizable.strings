@@ -63,6 +63,7 @@
 "prefs.font_style.current.title" = "常规";
 "prefs.font_style.rounded.title" = "圆角";
 "prefs.subtitle.global_enabled" = "插件总开关";
+"prefs.root.runtime_cache_footer" = "%@ cached to RAM";
 
 "prefs.section.dock.title" = "Dock 栏";
 "prefs.section.dock.subtitle" = "Dock 材质、形状变体、渲染质量等";
