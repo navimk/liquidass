@@ -13,6 +13,7 @@ static void *kLockPlatterDebugLoggedKey = &kLockPlatterDebugLoggedKey;
 #endif
 static void *kBannerBackdropViewKey = &kBannerBackdropViewKey;
 static void *kBannerAttachedKey = &kBannerAttachedKey;
+static void *kBannerLastLiveCaptureTimeKey = &kBannerLastLiveCaptureTimeKey;
 // Banner lifetime is tracked by the weak host registry, so this state only uses link/driver.
 static LGDisplayLinkState sBannerDisplayLinkState = {0};
 static NSHashTable<UIView *> *sBannerHosts = nil;
@@ -22,6 +23,10 @@ CGFloat LGLockscreenQuickActionsCornerRadius(UIView *view);
 
 static BOOL LGBannerEnabled(void) {
     return LG_globalEnabled() && LG_prefBool(@"Banner.Enabled", YES);
+}
+
+static CGFloat LGBannerLiveCaptureFPS(void) {
+    return LG_prefFloat(@"Banner.LiveCaptureFPS", 15.0);
 }
 
 static BOOL LGNotificationGlassEnabled(void) {
@@ -80,6 +85,7 @@ static void LGDetachBannerHostIfNeeded(UIView *view) {
     if (!view) return;
     if (![objc_getAssociatedObject(view, kBannerAttachedKey) boolValue]) return;
     objc_setAssociatedObject(view, kBannerAttachedKey, nil, OBJC_ASSOCIATION_ASSIGN);
+    objc_setAssociatedObject(view, kBannerLastLiveCaptureTimeKey, nil, OBJC_ASSOCIATION_ASSIGN);
     LGRemoveLiveBackdropCaptureView(view, kBannerBackdropViewKey);
     [LGBannerHostRegistry() removeObject:view];
     sBannerDisplayLinkState.activeCount = MAX(0, sBannerDisplayLinkState.activeCount - 1);
@@ -214,6 +220,7 @@ static void LGInjectBannerPlatterGlass(UIView *host) {
     if (!LGBannerEnabled()) {
         LGDebugLog(@"banner inject bail reason=disabled host=%@",
                    host ? NSStringFromClass(host.class) : @"(null)");
+        objc_setAssociatedObject(host, kBannerLastLiveCaptureTimeKey, nil, OBJC_ASSOCIATION_ASSIGN);
         LGRemoveLiveBackdropCaptureView(host, kBannerBackdropViewKey);
         LGCleanupLockscreenHost(host);
         LGProfileEnd(@"platter.inject", profileStart);
@@ -222,6 +229,13 @@ static void LGInjectBannerPlatterGlass(UIView *host) {
 
     CGFloat configuredBlur = LG_prefFloat(@"Banner.Blur", LGBannerDefaultBlur);
     CGFloat effectiveBlur = LGEffectiveBannerBlur(configuredBlur);
+    BOOL hadGlass = NO;
+    for (UIView *sub in host.subviews) {
+        if ([sub isKindOfClass:[LiquidGlassView class]]) {
+            hadGlass = YES;
+            break;
+        }
+    }
 
     CGFloat cornerRadius = LG_prefFloat(@"Banner.CornerRadius", LGBannerDefaultCornerRadius);
     LiquidGlassView *glass = LGLockscreenEnsureConfiguredGlass(host,
@@ -241,6 +255,15 @@ static void LGInjectBannerPlatterGlass(UIView *host) {
         LGProfileEnd(@"platter.inject", profileStart);
         return;
     }
+    if (!LGShouldRefreshLiveCaptureForHost(host,
+                                           @"Banner.RenderingMode",
+                                           kBannerLastLiveCaptureTimeKey,
+                                           LGBannerLiveCaptureFPS(),
+                                           hadGlass)) {
+        [glass updateOrigin];
+        LGProfileEnd(@"platter.inject", profileStart);
+        return;
+    }
     CGPoint fallbackOrigin = CGPointZero;
     UIImage *fallbackSnapshot = LG_getHomescreenSnapshot(&fallbackOrigin);
     if (!LGApplyRenderingModeToGlassHost(host,
@@ -255,6 +278,9 @@ static void LGInjectBannerPlatterGlass(UIView *host) {
         LGCleanupLockscreenHost(host);
         LGProfileEnd(@"platter.inject", profileStart);
         return;
+    }
+    if (LG_prefersLiveCapture(@"Banner.RenderingMode")) {
+        LGMarkLiveCaptureRefreshedForHost(host, kBannerLastLiveCaptureTimeKey);
     }
     LGProfileEnd(@"platter.inject", profileStart);
 }
@@ -455,6 +481,56 @@ void LGLockscreenRefreshAllHosts(void) {
         }
     } else {
         for (UIWindow *window in LGApplicationWindows(app)) refreshWindow(window);
+    }
+}
+
+void LGLockscreenRefreshAttachedHosts(void) {
+    for (UIView *view in LGLockscreenAttachedHosts()) {
+        if (!view.window) {
+            LGCleanupLockscreenHost(view);
+            continue;
+        }
+        if ([view isKindOfClass:NSClassFromString(@"MTMaterialView")]) {
+            if (isPrimaryPlatterMaterialHost(view)) {
+                if (isBannerPlatterHost(view)) continue;
+                if (LGNotificationGlassEnabled()) {
+                    LGLockscreenInjectGlass(view, LGLockscreenCornerRadius());
+                    LGAttachLockHostIfNeeded(view);
+                } else {
+                    LGCleanupLockscreenHost(view);
+                }
+                continue;
+            }
+            if (isPrimaryActionButtonMaterialHost(view)) {
+                if (LGNotificationGlassEnabled()) {
+                    LGLockscreenInjectGlass(view, LGNotificationActionButtonCornerRadius(view));
+                    LGAttachLockHostIfNeeded(view);
+                } else {
+                    LGCleanupLockscreenHost(view);
+                }
+                continue;
+            }
+        }
+        if (LGIsLockscreenQuickActionsHost(view)) {
+            if (LG_prefBool(@"LockscreenQuickActions.Enabled", YES)) {
+                CGFloat cornerRadius = LGLockscreenQuickActionsCornerRadius(view);
+                LGLockscreenInjectGlassWithSettingsAndMode(view,
+                                                           @"LockscreenQuickActions.RenderingMode",
+                                                           cornerRadius,
+                                                           LG_prefFloat(@"LockscreenQuickActions.BezelWidth", 12.0),
+                                                           LG_prefFloat(@"LockscreenQuickActions.GlassThickness", 80.0),
+                                                           LG_prefFloat(@"LockscreenQuickActions.RefractionScale", 1.2),
+                                                           LG_prefFloat(@"LockscreenQuickActions.RefractiveIndex", 1.0),
+                                                           LG_prefFloat(@"LockscreenQuickActions.SpecularOpacity", 0.6),
+                                                           LG_prefFloat(@"LockscreenQuickActions.Blur", 8.0),
+                                                           LG_prefFloat(@"LockscreenQuickActions.WallpaperScale", 0.5),
+                                                           LG_prefFloat(@"LockscreenQuickActions.LightTintAlpha", 0.1),
+                                                           LG_prefFloat(@"LockscreenQuickActions.DarkTintAlpha", 0.6));
+                LGAttachLockHostIfNeeded(view);
+            } else {
+                LGCleanupLockscreenHost(view);
+            }
+        }
     }
 }
 

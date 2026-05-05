@@ -11,6 +11,8 @@ static void *kContextMenuReusableOriginalBackgroundKey = &kContextMenuReusableOr
 static void *kContextMenuOriginalCornerRadiusKey = &kContextMenuOriginalCornerRadiusKey;
 static void *kContextMenuOriginalCornerCurveKey = &kContextMenuOriginalCornerCurveKey;
 static void *kContextMenuBackdropViewKey = &kContextMenuBackdropViewKey;
+static void *kContextMenuLastLiveCaptureTimeKey = &kContextMenuLastLiveCaptureTimeKey;
+static NSHashTable<UIVisualEffectView *> *sContextMenuEffectHosts = nil;
 
 static BOOL LGContextMenuColorIsEffectivelyTransparent(UIColor *color) {
     if (!color) return YES;
@@ -31,8 +33,10 @@ LG_FLOAT_PREF_FUNC(LGContextMenuDarkTintAlpha, "ContextMenu.DarkTintAlpha", 0.6)
 LG_FLOAT_PREF_FUNC(LGContextMenuWallpaperScale, "ContextMenu.WallpaperScale", 0.1)
 LG_FLOAT_PREF_FUNC(LGContextMenuRowInset, "ContextMenu.RowInset", 16.0)
 LG_FLOAT_PREF_FUNC(LGContextMenuIconSpacing, "ContextMenu.IconSpacing", 12.0)
+LG_FLOAT_PREF_FUNC(LGContextMenuLiveCaptureFPS, "ContextMenu.LiveCaptureFPS", 15.0)
 
 static void LGContextMenuRefreshAllHosts(void);
+static void LGContextMenuRefreshAttachedHosts(void);
 static void LGStyleContextMenuListSubviews(UIView *listView);
 static CGFloat LGResolvedContextMenuCornerRadiusForView(UIView *view);
 
@@ -45,7 +49,7 @@ static void startContextMenuLink(void) {
                                              LGPreferredFramesPerSecondForKey(@"Homescreen.FPS", 30),
                                              @"DisplayLink.ContextMenu.Enabled",
                                              ^{
-        if (LG_prefersLiveCapture(@"ContextMenu.RenderingMode")) LGContextMenuRefreshAllHosts();
+        if (LG_prefersLiveCapture(@"ContextMenu.RenderingMode")) LGContextMenuRefreshAttachedHosts();
         else LG_updateRegisteredGlassViews(LGUpdateGroupContextMenu);
     });
 }
@@ -62,6 +66,13 @@ static UIView *findDescendantMatching(UIView *root, BOOL (^match)(UIView *view))
         if (found) return found;
     }
     return nil;
+}
+
+static NSHashTable<UIVisualEffectView *> *LGContextMenuEffectRegistry(void) {
+    if (!sContextMenuEffectHosts) {
+        sContextMenuEffectHosts = [NSHashTable weakObjectsHashTable];
+    }
+    return sContextMenuEffectHosts;
 }
 
 static BOOL LGContextMenuCellContextViewIsStock(UIView *view) {
@@ -393,15 +404,13 @@ static void setBackdropHiddenInEffectView(UIView *effectView, BOOL hidden) {
 
 static void injectGlassIntoEffectView(UIVisualEffectView *fxView, int attempt) {
     UIView *container = fxView.contentView;
-    LGRemoveLiveBackdropCaptureView(container, kContextMenuBackdropViewKey);
 
-    for (NSInteger i = container.subviews.count - 1; i >= 0; i--) {
-        UIView *sub = container.subviews[i];
-        if ([sub isKindOfClass:[LiquidGlassView class]] || sub.tag == kContextMenuTintTag)
-            [sub removeFromSuperview];
+    if (!LGContextMenuEnabled()) {
+        LGRemoveLiveBackdropCaptureView(fxView, kContextMenuBackdropViewKey);
+        LGRemoveLiveBackdropCaptureView(container, kContextMenuBackdropViewKey);
+        removeContextMenuInjectedSubviews(container);
+        return;
     }
-
-    if (!LGContextMenuEnabled()) return;
 
     if (container.bounds.size.width < 10 || container.bounds.size.height < 10) {
         // springboard sometimes gives us zero-ish bounds for a bit
@@ -416,10 +425,27 @@ static void injectGlassIntoEffectView(UIVisualEffectView *fxView, int attempt) {
     UIImage *wallpaper = LG_getCachedContextMenuSnapshot();
     if (!wallpaper && !LG_prefersLiveCapture(@"ContextMenu.RenderingMode")) return;
 
-    LiquidGlassView *glass = [[LiquidGlassView alloc]
-        initWithFrame:container.bounds wallpaper:wallpaper wallpaperOrigin:CGPointZero];
-    glass.autoresizingMask = UIViewAutoresizingFlexibleWidth |
-                             UIViewAutoresizingFlexibleHeight;
+    LiquidGlassView *glass = nil;
+    for (UIView *sub in container.subviews) {
+        if ([sub isKindOfClass:[LiquidGlassView class]]) {
+            glass = (LiquidGlassView *)sub;
+            break;
+        }
+    }
+    BOOL hadGlass = (glass != nil);
+    if (!glass) {
+        glass = [[LiquidGlassView alloc]
+            initWithFrame:container.bounds wallpaper:wallpaper wallpaperOrigin:CGPointZero];
+        glass.autoresizingMask = UIViewAutoresizingFlexibleWidth |
+                                 UIViewAutoresizingFlexibleHeight;
+        glass.userInteractionEnabled = NO;
+        [container insertSubview:glass atIndex:0];
+    } else {
+        glass.frame = container.bounds;
+        if (!LG_prefersLiveCapture(@"ContextMenu.RenderingMode")) {
+            glass.wallpaperImage = wallpaper;
+        }
+    }
     glass.cornerRadius    = LGContextMenuCornerRadius();
     glass.blur            = LGContextMenuBlur();
     glass.refractionScale = LGContextMenuRefraction();
@@ -430,24 +456,38 @@ static void injectGlassIntoEffectView(UIVisualEffectView *fxView, int attempt) {
     glass.releasesWallpaperAfterUpload = YES;
     glass.wallpaperScale  = LGContextMenuWallpaperScale();
     glass.updateGroup     = LGUpdateGroupContextMenu;
-    [container insertSubview:glass atIndex:0];
-    if (!LGApplyRenderingModeToGlassHost(container,
-                                         glass,
-                                         @"ContextMenu.RenderingMode",
-                                         kContextMenuBackdropViewKey,
-                                         wallpaper,
-                                         CGPointZero)) {
-        [glass removeFromSuperview];
+    if (glass.superview != container) [container insertSubview:glass atIndex:0];
+    [LGContextMenuEffectRegistry() addObject:fxView];
+    if (!LGShouldRefreshLiveCaptureForHost(fxView,
+                                           @"ContextMenu.RenderingMode",
+                                           kContextMenuLastLiveCaptureTimeKey,
+                                           LGContextMenuLiveCaptureFPS(),
+                                           hadGlass)) {
+        [glass updateOrigin];
+    } else if (!LGApplyRenderingModeToGlassHost(fxView,
+                                               glass,
+                                               @"ContextMenu.RenderingMode",
+                                               kContextMenuBackdropViewKey,
+                                               wallpaper,
+                                               CGPointZero)) {
+        if (!hadGlass) [glass removeFromSuperview];
         return;
+    } else if (LG_prefersLiveCapture(@"ContextMenu.RenderingMode")) {
+        LGMarkLiveCaptureRefreshedForHost(fxView, kContextMenuLastLiveCaptureTimeKey);
     }
 
-    UIView *tint = [[UIView alloc] initWithFrame:container.bounds];
-    tint.tag                    = kContextMenuTintTag;
-    tint.autoresizingMask       = UIViewAutoresizingFlexibleWidth |
-                                  UIViewAutoresizingFlexibleHeight;
-    tint.userInteractionEnabled = NO;
+    UIView *tint = [container viewWithTag:kContextMenuTintTag];
+    if (!tint) {
+        tint = [[UIView alloc] initWithFrame:container.bounds];
+        tint.tag                    = kContextMenuTintTag;
+        tint.autoresizingMask       = UIViewAutoresizingFlexibleWidth |
+                                      UIViewAutoresizingFlexibleHeight;
+        tint.userInteractionEnabled = NO;
+    }
+    tint.frame = container.bounds;
     applyContextMenuTintStyle(tint);
-    [container insertSubview:tint aboveSubview:glass];
+    if (tint.superview != container) [container insertSubview:tint aboveSubview:glass];
+    else [container bringSubviewToFront:tint];
 
 }
 
@@ -489,6 +529,17 @@ static void LGContextMenuRefreshAllHosts(void) {
     }
 }
 
+static void LGContextMenuRefreshAttachedHosts(void) {
+    for (UIVisualEffectView *fx in LGContextMenuEffectRegistry().allObjects) {
+        if (!fx.window) {
+            [LGContextMenuEffectRegistry() removeObject:fx];
+            continue;
+        }
+        setBackdropHiddenInEffectView(fx, LGContextMenuEnabled());
+        injectGlassIntoEffectView(fx, 0);
+    }
+}
+
 static void LGContextMenuPrefsChanged(CFNotificationCenterRef center,
                                       void *observer,
                                       CFStringRef name,
@@ -509,6 +560,9 @@ static void LGContextMenuPrefsChanged(CFNotificationCenterRef center,
 
     if (!self_.window) {
         if (self_.tag == kContextMenuGlassTag) self_.tag = 0;
+        [LGContextMenuEffectRegistry() removeObject:(UIVisualEffectView *)self_];
+        LGRemoveLiveBackdropCaptureView(self_, kContextMenuBackdropViewKey);
+        objc_setAssociatedObject(self_, kContextMenuLastLiveCaptureTimeKey, nil, OBJC_ASSOCIATION_ASSIGN);
         return;
     }
 

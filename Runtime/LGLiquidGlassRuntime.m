@@ -765,7 +765,11 @@ void LGPrewarmPipelines(void) {
     }
     float imgW = (float)_bgTexture.width;
     float imgH = (float)_bgTexture.height;
-    float fillScale = fmaxf((float)screenW / imgW, (float)screenH / imgH);
+    float samplingW = (float)samplingWallpaperPixelSize.width;
+    float samplingH = (float)samplingWallpaperPixelSize.height;
+    float fillScale = (_usesExternalWallpaperTexture && samplingW > 1.0f && samplingH > 1.0f)
+        ? fmaxf(samplingW / imgW, samplingH / imgH)
+        : fmaxf((float)screenW / imgW, (float)screenH / imgH);
     float blurPx = (float)_blur * (float)scale / fillScale;
 
     if ((_needsBlurBake || blurPx != _lastBakedBlurRadius) && _cacheEntry) {

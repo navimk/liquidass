@@ -102,14 +102,23 @@ BOOL LGCaptureLiveBackdropTextureForHost(UIView *host,
     }
 
     backdropView.frame = captureRect;
-    if (backdropView.superview != superview) {
-        [superview insertSubview:backdropView belowSubview:host];
-    } else {
-        NSInteger hostIndex = [superview.subviews indexOfObjectIdenticalTo:host];
-        NSInteger backdropIndex = [superview.subviews indexOfObjectIdenticalTo:backdropView];
-        if (hostIndex != NSNotFound && backdropIndex != NSNotFound && backdropIndex >= hostIndex) {
+    @try {
+        if (backdropView.superview != superview) {
             [superview insertSubview:backdropView belowSubview:host];
+        } else {
+            NSInteger hostIndex = [superview.subviews indexOfObjectIdenticalTo:host];
+            NSInteger backdropIndex = [superview.subviews indexOfObjectIdenticalTo:backdropView];
+            if (hostIndex != NSNotFound && backdropIndex != NSNotFound && backdropIndex >= hostIndex) {
+                [superview insertSubview:backdropView belowSubview:host];
+            }
         }
+    } @catch (NSException *exception) {
+        LGDebugLog(@"live capture bail reason=insert-exception host=%@ superview=%@ exception=%@",
+                   NSStringFromClass(host.class),
+                   NSStringFromClass(superview.class),
+                   exception.reason ?: exception.name);
+        [backdropView removeFromSuperview];
+        return NO;
     }
 
     CGFloat screenScale = host.window.screen.scale ?: UIScreen.mainScreen.scale ?: 2.0f;
@@ -217,4 +226,29 @@ BOOL LGApplyRenderingModeToGlassHost(UIView *host,
                NSStringFromCGPoint(snapshotOrigin),
                NSStringFromCGSize(snapshot.size));
     return YES;
+}
+
+BOOL LGShouldRefreshLiveCaptureForHost(UIView *host,
+                                       NSString *renderingModeKey,
+                                       const void *lastCaptureTimeKey,
+                                       CGFloat framesPerSecond,
+                                       BOOL hadGlass) {
+    if (!host || !renderingModeKey.length || !lastCaptureTimeKey) return YES;
+    if (!LG_prefersLiveCapture(renderingModeKey)) return YES;
+    if (!hadGlass) return YES;
+
+    CGFloat fps = MAX(1.0, framesPerSecond);
+    NSNumber *lastCaptureNumber = objc_getAssociatedObject(host, lastCaptureTimeKey);
+    if (!lastCaptureNumber) return YES;
+
+    CFTimeInterval now = CACurrentMediaTime();
+    return (now - lastCaptureNumber.doubleValue) >= (1.0 / fps);
+}
+
+void LGMarkLiveCaptureRefreshedForHost(UIView *host, const void *lastCaptureTimeKey) {
+    if (!host || !lastCaptureTimeKey) return;
+    objc_setAssociatedObject(host,
+                             lastCaptureTimeKey,
+                             @(CACurrentMediaTime()),
+                             OBJC_ASSOCIATION_RETAIN_NONATOMIC);
 }

@@ -13,8 +13,10 @@ typedef NS_ENUM(NSInteger, LGDockMode) {
 };
 
 static void LGDockRefreshAllHosts(void);
+static void LGDockRefreshAttachedHosts(void);
 
 static LGDisplayLinkState sDockDisplayLinkState = {0};
+static NSHashTable<UIView *> *sDockHosts = nil;
 
 LG_ENABLED_BOOL_PREF_FUNC(LGDockEnabled, "Dock.Enabled", YES)
 LG_FLOAT_PREF_FUNC(LGDockCornerRadiusHomeButton, "Dock.CornerRadiusHomeButton", 0.0)
@@ -29,6 +31,14 @@ LG_FLOAT_PREF_FUNC(LGDockBlur, "Dock.Blur", 10.0)
 LG_FLOAT_PREF_FUNC(LGDockWallpaperScale, "Dock.WallpaperScale", 0.25)
 LG_FLOAT_PREF_FUNC(LGDockLightTintAlpha, "Dock.LightTintAlpha", 0.1)
 LG_FLOAT_PREF_FUNC(LGDockDarkTintAlpha, "Dock.DarkTintAlpha", 0.0)
+LG_FLOAT_PREF_FUNC(LGDockLiveCaptureFPS, "Dock.LiveCaptureFPS", 12.0)
+
+static NSHashTable<UIView *> *LGDockHostRegistry(void) {
+    if (!sDockHosts) {
+        sDockHosts = [NSHashTable weakObjectsHashTable];
+    }
+    return sDockHosts;
+}
 
 static BOOL isInsideCategoryStackBackground(UIView *view) {
     UIView *v = view;
@@ -84,6 +94,7 @@ static void *kDockTintKey = &kDockTintKey;
 static void *kDockGlassKey = &kDockGlassKey;
 static void *kDockOriginalFrameKey = &kDockOriginalFrameKey;
 static void *kDockOriginalSuperviewClipsKey = &kDockOriginalSuperviewClipsKey;
+static void *kDockLastLiveCaptureTimeKey = &kDockLastLiveCaptureTimeKey;
 static void *kDockBackdropViewKey = &kDockBackdropViewKey;
 
 static LGDockMode LGResolveDockModeForView(UIView *view) {
@@ -111,7 +122,7 @@ static void startDockDisplayLink(void) {
                                              LGPreferredFramesPerSecondForKey(@"Homescreen.FPS", 30),
                                              @"DisplayLink.Dock.Enabled",
                                              ^{
-        if (LG_prefersLiveCapture(@"Dock.RenderingMode")) LGDockRefreshAllHosts();
+        if (LG_prefersLiveCapture(@"Dock.RenderingMode")) LGDockRefreshAttachedHosts();
         else LG_updateRegisteredGlassViews(LGUpdateGroupDock);
     });
 }
@@ -214,6 +225,24 @@ static void removeDockOverlays(UIView *host) {
     LGRestoreDockHostFrameIfNeeded(host);
 }
 
+static BOOL LGDockShouldRecaptureLiveBackdrop(UIView *host, BOOL hadGlass) {
+    if (!LG_prefersLiveCapture(@"Dock.RenderingMode")) return YES;
+    if (!hadGlass) return YES;
+    CGFloat fps = MAX(1.0, LGDockLiveCaptureFPS());
+    CFTimeInterval minInterval = 1.0 / fps;
+    CFTimeInterval now = CACurrentMediaTime();
+    NSNumber *lastCaptureNumber = objc_getAssociatedObject(host, kDockLastLiveCaptureTimeKey);
+    CFTimeInterval lastCapture = lastCaptureNumber ? lastCaptureNumber.doubleValue : 0.0;
+    if (lastCapture <= 0.0 || now - lastCapture >= minInterval) return YES;
+    return NO;
+}
+
+static void LGDockMarkLiveBackdropCaptured(UIView *host) {
+    if (!host) return;
+    if (!LG_prefersLiveCapture(@"Dock.RenderingMode")) return;
+    objc_setAssociatedObject(host, kDockLastLiveCaptureTimeKey, @(CACurrentMediaTime()), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+}
+
 static void injectIntoDock(UIView *self_) {
     CFTimeInterval profileStart = LGProfileBegin();
     if (!LGDockEnabled()) {
@@ -257,6 +286,7 @@ static void injectIntoDock(UIView *self_) {
     }
 
     LiquidGlassView *glass = objc_getAssociatedObject(self_, kDockGlassKey);
+    BOOL hadGlass = glass != nil;
     CGRect glassFrame = LGDockOverlayFrameForHost(self_, mode);
 
     if (!glass) {
@@ -267,7 +297,9 @@ static void injectIntoDock(UIView *self_) {
         [self_ addSubview:glass];
         objc_setAssociatedObject(self_, kDockGlassKey, glass, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     } else {
-        glass.wallpaperImage = wallpaper;
+        if (!LG_prefersLiveCapture(@"Dock.RenderingMode")) {
+            glass.wallpaperImage = wallpaper;
+        }
         if (glass.superview != self_) {
             [glass removeFromSuperview];
             [self_ addSubview:glass];
@@ -286,6 +318,13 @@ static void injectIntoDock(UIView *self_) {
     glass.blur            = LGDockBlur();
     glass.wallpaperScale  = LGDockWallpaperScale();
     glass.updateGroup     = LGUpdateGroupDock;
+    if (LG_prefersLiveCapture(@"Dock.RenderingMode") &&
+        !LGDockShouldRecaptureLiveBackdrop(self_, hadGlass)) {
+        [glass updateOrigin];
+        ensureDockTintOverlay(self_);
+        LGProfileEnd(@"dock.inject", profileStart);
+        return;
+    }
     if (!LGApplyRenderingModeToGlassHost(self_,
                                          glass,
                                          @"Dock.RenderingMode",
@@ -298,6 +337,7 @@ static void injectIntoDock(UIView *self_) {
         LGProfileEnd(@"dock.inject", profileStart);
         return;
     }
+    LGDockMarkLiveBackdropCaptured(self_);
     ensureDockTintOverlay(self_);
     objc_setAssociatedObject(self_, kDockRetryKey, nil, OBJC_ASSOCIATION_ASSIGN);
     LGDebugLog(@"dock inject ok host=%@ mode=%@ frame=%@ glass=%@ radius=%.2f snapshot=%@ origin=%@",
@@ -349,6 +389,23 @@ static void LGDockRefreshAllHosts(void) {
         }
     }
     LGProfileEnd(@"dock.refresh_all_hosts", profileStart);
+}
+
+static void LGDockRefreshAttachedHosts(void) {
+    CFTimeInterval profileStart = LGProfileBegin();
+    for (UIView *view in LGDockHostRegistry().allObjects) {
+        if (!view.window) continue;
+        if (isInsideCategoryStackBackground(view)) {
+            removeDockOverlays(view);
+            continue;
+        }
+        LGDockMode mode = LGResolveDockModeForView(view);
+        if (mode == LGDockModeNone) continue;
+        objc_setAssociatedObject(view, kDockModeKey, @(mode), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        injectIntoDock(view);
+        ensureDockTintOverlay(view);
+    }
+    LGProfileEnd(@"dock.refresh_attached_hosts", profileStart);
 }
 
 static void LGDockPrefsChanged(CFNotificationCenterRef center,
@@ -411,6 +468,7 @@ static void LGDockPrefsChanged(CFNotificationCenterRef center,
     });
     if (![objc_getAssociatedObject(self_, kDockAttachedKey) boolValue]) {
         objc_setAssociatedObject(self_, kDockAttachedKey, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        [LGDockHostRegistry() addObject:self_];
         sDockDisplayLinkState.activeCount++;
         LGDisplayLinkStateDidChangeActivity(&sDockDisplayLinkState);
         startDockDisplayLink();
@@ -446,6 +504,7 @@ static void LGDockPrefsChanged(CFNotificationCenterRef center,
             ensureDockTintOverlay(self_);
             if (![objc_getAssociatedObject(self_, kDockAttachedKey) boolValue]) {
                 objc_setAssociatedObject(self_, kDockAttachedKey, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+                [LGDockHostRegistry() addObject:self_];
                 sDockDisplayLinkState.activeCount++;
                 LGDisplayLinkStateDidChangeActivity(&sDockDisplayLinkState);
                 startDockDisplayLink();
@@ -466,6 +525,8 @@ static void LGDockPrefsChanged(CFNotificationCenterRef center,
     if (!newWindow && [objc_getAssociatedObject(self_, kDockAttachedKey) boolValue]) {
         objc_setAssociatedObject(self_, kDockAttachedKey, nil, OBJC_ASSOCIATION_ASSIGN);
         objc_setAssociatedObject(self_, kDockModeKey, nil, OBJC_ASSOCIATION_ASSIGN);
+        objc_setAssociatedObject(self_, kDockLastLiveCaptureTimeKey, nil, OBJC_ASSOCIATION_ASSIGN);
+        [LGDockHostRegistry() removeObject:self_];
         sDockDisplayLinkState.activeCount = MAX(0, sDockDisplayLinkState.activeCount - 1);
         LGDisplayLinkStateDidChangeActivity(&sDockDisplayLinkState);
         if (sDockDisplayLinkState.activeCount == 0) stopDockDisplayLink();

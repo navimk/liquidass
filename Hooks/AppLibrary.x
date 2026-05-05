@@ -8,6 +8,7 @@
 static void startAppLibDisplayLink(void);
 static void stopAppLibDisplayLink(void);
 static void LGAppLibraryRefreshAllHosts(void);
+static void LGAppLibraryRefreshAttachedHosts(void);
 static void LGRemoveAppLibraryGlass(UIView *view);
 static BOOL isInsideSearchTextField(UIView *view);
 static UIView *LGAppLibraryPodHostView(UIView *view);
@@ -25,8 +26,10 @@ static void *kAppLibOriginalClipsKey = &kAppLibOriginalClipsKey;
 static void *kAppLibGlassKey = &kAppLibGlassKey;
 static void *kAppLibTintKey = &kAppLibTintKey;
 static void *kAppLibFocusResanitizePendingKey = &kAppLibFocusResanitizePendingKey;
+static void *kAppLibLastLiveCaptureTimeKey = &kAppLibLastLiveCaptureTimeKey;
 static void *kAppLibBackdropViewKey = &kAppLibBackdropViewKey;
 static void *kAppLibSearchBackdropViewKey = &kAppLibSearchBackdropViewKey;
+static NSHashTable<UIView *> *sAppLibraryHosts = nil;
 LG_ENABLED_BOOL_PREF_FUNC(LGAppLibraryEnabled, "AppLibrary.Enabled", YES)
 LG_BOOL_PREF_FUNC(LGAppLibraryUseIconSnapshot, "AppLibrary.CompositeSnapshot", NO)
 static CGFloat LGAppLibCornerRadius(void) { return LGDynamicDefaultFloat(@"AppLibrary.CornerRadius", 20.2); }
@@ -50,6 +53,14 @@ LG_FLOAT_PREF_FUNC(LGAppLibSearchBlur, "AppLibrary.SearchBlur", 25.0)
 LG_FLOAT_PREF_FUNC(LGAppLibSearchWallpaperScale, "AppLibrary.SearchWallpaperScale", 0.1)
 LG_FLOAT_PREF_FUNC(LGAppLibSearchLightTintAlpha, "AppLibrary.SearchLightTintAlpha", 0.1)
 LG_FLOAT_PREF_FUNC(LGAppLibSearchDarkTintAlpha, "AppLibrary.SearchDarkTintAlpha", 0.0)
+LG_FLOAT_PREF_FUNC(LGAppLibraryLiveCaptureFPS, "AppLibrary.LiveCaptureFPS", 12.0)
+
+static NSHashTable<UIView *> *LGAppLibraryHostRegistry(void) {
+    if (!sAppLibraryHosts) {
+        sAppLibraryHosts = [NSHashTable weakObjectsHashTable];
+    }
+    return sAppLibraryHosts;
+}
 
 static BOOL LGAnyAppLibraryGlassEnabled(void) {
     return LGAppLibraryEnabled() || LGAppLibSearchEnabled();
@@ -169,7 +180,7 @@ static void startAppLibDisplayLink(void) {
                                              ^{
         if (LG_prefersLiveCapture(@"AppLibrary.RenderingMode") ||
             LG_prefersLiveCapture(@"AppLibrary.Search.RenderingMode")) {
-            LGAppLibraryRefreshAllHosts();
+            LGAppLibraryRefreshAttachedHosts();
         } else {
             LG_updateRegisteredGlassViews(LGUpdateGroupAppLibrary);
         }
@@ -215,6 +226,9 @@ static void LGAppLibraryRestoreOriginalState(UIView *view) {
 }
 
 static void LGRemoveAppLibraryGlass(UIView *view) {
+    if (!view) return;
+    [LGAppLibraryHostRegistry() removeObject:view];
+    objc_setAssociatedObject(view, kAppLibLastLiveCaptureTimeKey, nil, OBJC_ASSOCIATION_ASSIGN);
     LGRemoveAssociatedSubview(view, kAppLibTintKey);
     LiquidGlassView *glass = objc_getAssociatedObject(view, kAppLibGlassKey);
     if (glass) [glass removeFromSuperview];
@@ -343,6 +357,35 @@ static void injectIntoAppLibrary(UIView *self_) {
     }
     startAppLibDisplayLink();
 
+    LGAppLibraryPrepareHost(host, LGAppLibCornerRadius());
+
+    LiquidGlassView *glass = objc_getAssociatedObject(host, kAppLibGlassKey);
+    BOOL hadGlass = (glass != nil);
+    if (!LGShouldRefreshLiveCaptureForHost(host,
+                                           @"AppLibrary.RenderingMode",
+                                           kAppLibLastLiveCaptureTimeKey,
+                                           LGAppLibraryLiveCaptureFPS(),
+                                           hadGlass)) {
+        LGAppLibraryConfigureGlass(glass,
+                                   LGAppLibCornerRadius(),
+                                   LGAppLibBezelWidth(),
+                                   LGAppLibGlassThickness(),
+                                   LGAppLibRefractionScale(),
+                                   LGAppLibRefractiveIndex(),
+                                   LGAppLibSpecularOpacity(),
+                                   LGAppLibBlur(),
+                                   LGAppLibWallpaperScale());
+        LGAppLibraryPreparePodChildren(host);
+        LGEnsureAppLibraryTintOverlay(host,
+                                      LGAppLibCornerRadius(),
+                                      LGAppLibraryTintColorForView(host,
+                                                                   LGAppLibLightTintAlpha(),
+                                                                   LGAppLibDarkTintAlpha()));
+        [LGAppLibraryHostRegistry() addObject:host];
+        [glass updateOrigin];
+        return;
+    }
+
     CGPoint wallpaperOrigin = CGPointZero;
     UIImage *snapshot = LGAppLibraryCompositeSnapshot(&wallpaperOrigin);
     if (!snapshot && !LG_prefersLiveCapture(@"AppLibrary.RenderingMode")) {
@@ -353,9 +396,6 @@ static void injectIntoAppLibrary(UIView *self_) {
         return;
     }
 
-    LGAppLibraryPrepareHost(host, LGAppLibCornerRadius());
-
-    LiquidGlassView *glass = objc_getAssociatedObject(host, kAppLibGlassKey);
     if (!glass) {
         glass = [[LiquidGlassView alloc]
             initWithFrame:host.bounds wallpaper:snapshot wallpaperOrigin:wallpaperOrigin];
@@ -364,7 +404,7 @@ static void injectIntoAppLibrary(UIView *self_) {
         glass.userInteractionEnabled = NO;
         [host insertSubview:glass atIndex:0];
         objc_setAssociatedObject(host, kAppLibGlassKey, glass, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-    } else {
+    } else if (!LG_prefersLiveCapture(@"AppLibrary.RenderingMode")) {
         glass.wallpaperImage = snapshot;
     }
     LGAppLibraryConfigureGlass(glass,
@@ -383,6 +423,7 @@ static void injectIntoAppLibrary(UIView *self_) {
                                                                LGAppLibLightTintAlpha(),
                                                                LGAppLibDarkTintAlpha()));
     objc_setAssociatedObject(host, kAppLibRetryKey, nil, OBJC_ASSOCIATION_ASSIGN);
+    [LGAppLibraryHostRegistry() addObject:host];
     if (!LGApplyRenderingModeToGlassHost(host,
                                          glass,
                                          @"AppLibrary.RenderingMode",
@@ -394,6 +435,9 @@ static void injectIntoAppLibrary(UIView *self_) {
         });
         return;
     }
+    if (LG_prefersLiveCapture(@"AppLibrary.RenderingMode")) {
+        LGMarkLiveCaptureRefreshedForHost(host, kAppLibLastLiveCaptureTimeKey);
+    }
 }
 
 static void injectIntoSearchBar(UIView *self_) {
@@ -403,6 +447,35 @@ static void injectIntoSearchBar(UIView *self_) {
         return;
     }
     startAppLibDisplayLink();
+
+    CGFloat searchCornerRadius = LGResolvedAppLibSearchCornerRadius(self_);
+    LGAppLibraryPrepareHost(self_, searchCornerRadius);
+
+    LiquidGlassView *glass = objc_getAssociatedObject(self_, kAppLibGlassKey);
+    BOOL hadGlass = (glass != nil);
+    if (!LGShouldRefreshLiveCaptureForHost(self_,
+                                           @"AppLibrary.Search.RenderingMode",
+                                           kAppLibLastLiveCaptureTimeKey,
+                                           LGAppLibraryLiveCaptureFPS(),
+                                           hadGlass)) {
+        LGAppLibraryConfigureGlass(glass,
+                                   searchCornerRadius,
+                                   LGAppLibSearchBezelWidth(),
+                                   LGAppLibSearchGlassThickness(),
+                                   LGAppLibSearchRefractionScale(),
+                                   LGAppLibSearchRefractiveIndex(),
+                                   LGAppLibSearchSpecularOpacity(),
+                                   LGAppLibSearchBlur(),
+                                   LGAppLibSearchWallpaperScale());
+        LGEnsureAppLibraryTintOverlay(self_,
+                                      searchCornerRadius,
+                                      LGAppLibraryTintColorForView(self_,
+                                                                   LGAppLibSearchLightTintAlpha(),
+                                                                   LGAppLibSearchDarkTintAlpha()));
+        [LGAppLibraryHostRegistry() addObject:self_];
+        [glass updateOrigin];
+        return;
+    }
 
     CGPoint wallpaperOrigin = CGPointZero;
     UIImage *snapshot = LGAppLibraryCompositeSnapshot(&wallpaperOrigin);
@@ -414,10 +487,6 @@ static void injectIntoSearchBar(UIView *self_) {
         return;
     }
 
-    CGFloat searchCornerRadius = LGResolvedAppLibSearchCornerRadius(self_);
-    LGAppLibraryPrepareHost(self_, searchCornerRadius);
-
-    LiquidGlassView *glass = objc_getAssociatedObject(self_, kAppLibGlassKey);
     if (!glass) {
         glass = [[LiquidGlassView alloc]
             initWithFrame:self_.bounds wallpaper:snapshot wallpaperOrigin:wallpaperOrigin];
@@ -426,7 +495,7 @@ static void injectIntoSearchBar(UIView *self_) {
         glass.userInteractionEnabled = NO;
         [self_ insertSubview:glass atIndex:0];
         objc_setAssociatedObject(self_, kAppLibGlassKey, glass, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-    } else {
+    } else if (!LG_prefersLiveCapture(@"AppLibrary.Search.RenderingMode")) {
         glass.wallpaperImage = snapshot;
     }
     LGAppLibraryConfigureGlass(glass,
@@ -444,6 +513,7 @@ static void injectIntoSearchBar(UIView *self_) {
                                                                LGAppLibSearchLightTintAlpha(),
                                                                LGAppLibSearchDarkTintAlpha()));
     objc_setAssociatedObject(self_, kAppLibRetryKey, nil, OBJC_ASSOCIATION_ASSIGN);
+    [LGAppLibraryHostRegistry() addObject:self_];
     if (!LGApplyRenderingModeToGlassHost(self_,
                                          glass,
                                          @"AppLibrary.Search.RenderingMode",
@@ -454,6 +524,9 @@ static void injectIntoSearchBar(UIView *self_) {
             injectIntoSearchBar(self_);
         });
         return;
+    }
+    if (LG_prefersLiveCapture(@"AppLibrary.Search.RenderingMode")) {
+        LGMarkLiveCaptureRefreshedForHost(self_, kAppLibLastLiveCaptureTimeKey);
     }
 }
 
@@ -477,6 +550,27 @@ static void LGAppLibraryRefreshAllHosts(void) {
         }
     } else {
         for (UIWindow *window in LGApplicationWindows(app)) refreshWindow(window);
+    }
+}
+
+static void LGAppLibraryRefreshAttachedHosts(void) {
+    for (UIView *view in LGAppLibraryHostRegistry().allObjects) {
+        if (!view.window) {
+            LGRemoveAppLibraryGlass(view);
+            continue;
+        }
+        if (isInsideSearchTextField(view)) {
+            injectIntoSearchBar(view);
+        } else {
+            __block UIView *podView = nil;
+            LGTraverseViews(view, ^(UIView *candidate) {
+                if (podView) return;
+                if ([NSStringFromClass(candidate.class) isEqualToString:@"SBHLibraryCategoryPodBackgroundView"]) {
+                    podView = candidate;
+                }
+            });
+            injectIntoAppLibrary(podView ?: view);
+        }
     }
 }
 
@@ -534,13 +628,13 @@ static BOOL LGHandleSearchFieldMaterialView(UIView *view, BOOL updateOnly) {
     UIView *self_ = (UIView *)self;
 
     if (!self_.window) {
-        LGRemoveAppLibraryGlass(self_);
+        LGRemoveAppLibraryGlass(LGAppLibraryPodHostView(self_));
         LGAppLibraryRestoreOriginalState(self_);
         self_.clipsToBounds = YES;
         return;
     }
     if (!LGAppLibraryEnabled()) {
-        LGRemoveAppLibraryGlass(self_);
+        LGRemoveAppLibraryGlass(LGAppLibraryPodHostView(self_));
         LGAppLibraryRestoreOriginalState(self_);
         self_.clipsToBounds = YES;
         return;
@@ -553,7 +647,7 @@ static BOOL LGHandleSearchFieldMaterialView(UIView *view, BOOL updateOnly) {
     %orig;
     UIView *self_ = (UIView *)self;
     if (!LGAppLibraryEnabled()) {
-        LGRemoveAppLibraryGlass(self_);
+        LGRemoveAppLibraryGlass(LGAppLibraryPodHostView(self_));
         LGAppLibraryRestoreOriginalState(self_);
         self_.clipsToBounds = YES;
         return;

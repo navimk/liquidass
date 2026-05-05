@@ -11,7 +11,9 @@ static void *kFolderOpenAttachedKey = &kFolderOpenAttachedKey;
 static void *kFolderOpenGlassKey = &kFolderOpenGlassKey;
 static void *kFolderOpenTintKey = &kFolderOpenTintKey;
 static void *kFolderOpenResanitizePendingKey = &kFolderOpenResanitizePendingKey;
+static void *kFolderOpenLastLiveCaptureTimeKey = &kFolderOpenLastLiveCaptureTimeKey;
 static void *kFolderOpenBackdropViewKey = &kFolderOpenBackdropViewKey;
+static NSHashTable<UIView *> *sFolderOpenHosts = nil;
 
 static BOOL isInsideOpenFolder(UIView *view) {
     static Class cls;
@@ -58,6 +60,14 @@ LG_FLOAT_PREF_FUNC(LGFolderOpenBlur, "FolderOpen.Blur", 15.0)
 LG_FLOAT_PREF_FUNC(LGFolderOpenWallpaperScale, "FolderOpen.WallpaperScale", 0.1)
 LG_FLOAT_PREF_FUNC(LGFolderOpenLightTintAlpha, "FolderOpen.LightTintAlpha", 0.1)
 LG_FLOAT_PREF_FUNC(LGFolderOpenDarkTintAlpha, "FolderOpen.DarkTintAlpha", 0.0)
+LG_FLOAT_PREF_FUNC(LGFolderOpenLiveCaptureFPS, "FolderOpen.LiveCaptureFPS", 12.0)
+
+static NSHashTable<UIView *> *LGFolderOpenHostRegistry(void) {
+    if (!sFolderOpenHosts) {
+        sFolderOpenHosts = [NSHashTable weakObjectsHashTable];
+    }
+    return sFolderOpenHosts;
+}
 
 static UIColor *folderOpenTintColorForView(UIView *view) {
     return LGDefaultTintColorForViewWithOverrideKey(view, LGFolderOpenLightTintAlpha(), LGFolderOpenDarkTintAlpha(), @"FolderOpen.TintOverrideMode");
@@ -162,7 +172,11 @@ static void startFolderDisplayLink(void) {
                                              LGPreferredFramesPerSecondForKey(@"Homescreen.FPS", 30),
                                              @"DisplayLink.FolderOpen.Enabled",
                                              ^{
-        if (LG_prefersLiveCapture(@"FolderOpen.RenderingMode")) LGFolderOpenRefreshAllHosts();
+        if (LG_prefersLiveCapture(@"FolderOpen.RenderingMode")) {
+            for (UIView *host in LGFolderOpenHostRegistry().allObjects) {
+                LGHandleFolderOpenMaterialView(host, NO);
+            }
+        }
         else LG_updateRegisteredGlassViews(LGUpdateGroupFolderOpen);
     });
 }
@@ -222,6 +236,8 @@ static void LGRestoreFolderOpenHost(UIView *view) {
 
 static void LGDetachFolderOpenHost(UIView *view) {
     LGRestoreFolderOpenHost(view);
+    [LGFolderOpenHostRegistry() removeObject:view];
+    objc_setAssociatedObject(view, kFolderOpenLastLiveCaptureTimeKey, nil, OBJC_ASSOCIATION_ASSIGN);
     if (![objc_getAssociatedObject(view, kFolderOpenAttachedKey) boolValue]) return;
     objc_setAssociatedObject(view, kFolderOpenAttachedKey, nil, OBJC_ASSOCIATION_ASSIGN);
     sFolderDisplayLinkState.activeCount = MAX(0, sFolderDisplayLinkState.activeCount - 1);
@@ -239,6 +255,31 @@ static void injectIntoOpenFolder(UIView *host) {
         return;
     }
 
+    if (!objc_getAssociatedObject(host, kFolderOpenOriginalAlphaKey))
+        objc_setAssociatedObject(host, kFolderOpenOriginalAlphaKey, @(host.alpha), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+
+    LiquidGlassView *glass = objc_getAssociatedObject(host, kFolderOpenGlassKey);
+    BOOL hadGlass = (glass != nil);
+    if (!LGShouldRefreshLiveCaptureForHost(host,
+                                           @"FolderOpen.RenderingMode",
+                                           kFolderOpenLastLiveCaptureTimeKey,
+                                           LGFolderOpenLiveCaptureFPS(),
+                                           hadGlass)) {
+        glass.cornerRadius = LGFolderOpenCornerRadius();
+        glass.bezelWidth = LGFolderOpenBezelWidth();
+        glass.glassThickness = LGFolderOpenGlassThickness();
+        glass.refractionScale = LGFolderOpenRefractionScale();
+        glass.refractiveIndex = LGFolderOpenRefractiveIndex();
+        glass.specularOpacity = LGFolderOpenSpecularOpacity();
+        glass.blur = LGFolderOpenBlur();
+        glass.wallpaperScale = LGFolderOpenWallpaperScale();
+        LGStripFolderOpenMaterialFiltersIfNeeded(host);
+        ensureFolderOpenTintOverlay(host);
+        LGScheduleFolderOpenResanitize(host);
+        [glass updateOrigin];
+        return;
+    }
+
     UIImage *snapshot = LG_getFolderSnapshot();
     if (LG_imageLooksBlack(snapshot)) snapshot = nil;
     if (!snapshot) {
@@ -251,10 +292,6 @@ static void injectIntoOpenFolder(UIView *host) {
         return;
     }
 
-    if (!objc_getAssociatedObject(host, kFolderOpenOriginalAlphaKey))
-        objc_setAssociatedObject(host, kFolderOpenOriginalAlphaKey, @(host.alpha), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-
-    LiquidGlassView *glass = objc_getAssociatedObject(host, kFolderOpenGlassKey);
     if (!glass) {
         glass = [[LiquidGlassView alloc] initWithFrame:host.bounds
                                              wallpaper:snapshot
@@ -264,7 +301,7 @@ static void injectIntoOpenFolder(UIView *host) {
         glass.updateGroup = LGUpdateGroupFolderOpen;
         [host insertSubview:glass atIndex:0];
         objc_setAssociatedObject(host, kFolderOpenGlassKey, glass, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-    } else if (glass.wallpaperImage != snapshot) {
+    } else if (!LG_prefersLiveCapture(@"FolderOpen.RenderingMode") && glass.wallpaperImage != snapshot) {
         glass.wallpaperImage = snapshot;
     }
 
@@ -287,8 +324,12 @@ static void injectIntoOpenFolder(UIView *host) {
                                          CGPointZero)) {
         return;
     }
+    if (LG_prefersLiveCapture(@"FolderOpen.RenderingMode")) {
+        LGMarkLiveCaptureRefreshedForHost(host, kFolderOpenLastLiveCaptureTimeKey);
+    }
 
     if (![objc_getAssociatedObject(host, kFolderOpenAttachedKey) boolValue]) {
+        [LGFolderOpenHostRegistry() addObject:host];
         objc_setAssociatedObject(host, kFolderOpenAttachedKey, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
         sFolderDisplayLinkState.activeCount++;
         LGDisplayLinkStateDidChangeActivity(&sFolderDisplayLinkState);

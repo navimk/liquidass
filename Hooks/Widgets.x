@@ -7,6 +7,7 @@
 static const NSInteger kWidgetTintTag       = 0x71D0;
 
 static void LGWidgetsRefreshAllHosts(void);
+static void LGWidgetsRefreshAttachedHosts(void);
 static BOOL LGIsWidgetGlassHostView(UIView *view);
 static void LGRestoreWidgetOriginalState(UIView *view);
 static void *kWidgetAttachedKey = &kWidgetAttachedKey;
@@ -20,9 +21,11 @@ static void *kWidgetOriginalCornerCurveKey = &kWidgetOriginalCornerCurveKey;
 static void *kWidgetMaterialOriginalHiddenKey = &kWidgetMaterialOriginalHiddenKey;
 static void *kWidgetMaterialOriginalAlphaKey = &kWidgetMaterialOriginalAlphaKey;
 static void *kWidgetMaterialOriginalLayerOpacityKey = &kWidgetMaterialOriginalLayerOpacityKey;
+static void *kWidgetLastLiveCaptureTimeKey = &kWidgetLastLiveCaptureTimeKey;
 static void *kWidgetBackdropViewKey = &kWidgetBackdropViewKey;
 
 static LGDisplayLinkState sWidgetDisplayLinkState = {0};
+static NSHashTable<UIView *> *sWidgetHosts = nil;
 
 LG_ENABLED_BOOL_PREF_FUNC(LGWidgetEnabled, "Widgets.Enabled", NO)
 static CGFloat LGWidgetCornerRadius(void) { return LGDynamicDefaultFloat(@"Widgets.CornerRadius", 20.2); }
@@ -35,6 +38,14 @@ LG_FLOAT_PREF_FUNC(LGWidgetBlur, "Widgets.Blur", 8.0)
 LG_FLOAT_PREF_FUNC(LGWidgetWallpaperScale, "Widgets.WallpaperScale", 0.5)
 LG_FLOAT_PREF_FUNC(LGWidgetLightTintAlpha, "Widgets.LightTintAlpha", 0.1)
 LG_FLOAT_PREF_FUNC(LGWidgetDarkTintAlpha, "Widgets.DarkTintAlpha", 0.3)
+LG_FLOAT_PREF_FUNC(LGWidgetLiveCaptureFPS, "Widgets.LiveCaptureFPS", 8.0)
+
+static NSHashTable<UIView *> *LGWidgetHostRegistry(void) {
+    if (!sWidgetHosts) {
+        sWidgetHosts = [NSHashTable weakObjectsHashTable];
+    }
+    return sWidgetHosts;
+}
 
 @interface CHSWidget : NSObject
 @property (nonatomic, copy, readonly) NSString *extensionBundleIdentifier;
@@ -101,7 +112,8 @@ static void LGStartWidgetDisplayLink(void) {
                                              LGPreferredFramesPerSecondForKey(@"Homescreen.FPS", 30),
                                              @"DisplayLink.Widgets.Enabled",
                                              ^{
-        LG_updateRegisteredGlassViews(LGUpdateGroupWidgets);
+        if (LG_prefersLiveCapture(@"Widgets.RenderingMode")) LGWidgetsRefreshAttachedHosts();
+        else LG_updateRegisteredGlassViews(LGUpdateGroupWidgets);
     });
 }
 
@@ -201,6 +213,8 @@ static void LGStripWidgetTintFiltersFromLayerTree(CALayer *layer) {
 }
 
 static void removeWidgetOverlays(UIView *view) {
+    if (!view) return;
+    objc_setAssociatedObject(view, kWidgetLastLiveCaptureTimeKey, nil, OBJC_ASSOCIATION_ASSIGN);
     LGRemoveAssociatedSubview(view, kWidgetTintKey);
     LiquidGlassView *glass = objc_getAssociatedObject(view, kWidgetGlassKey);
     if (glass) [glass removeFromSuperview];
@@ -210,6 +224,7 @@ static void removeWidgetOverlays(UIView *view) {
 
 static void LGDetachWidgetGlassHostView(UIView *view) {
     if (!view) return;
+    [LGWidgetHostRegistry() removeObject:view];
     removeWidgetOverlays(view);
     LGRestoreWidgetOriginalState(view);
     if ([objc_getAssociatedObject(view, kWidgetAttachedKey) boolValue]) {
@@ -361,6 +376,27 @@ static void LGInjectIntoWidgetGlassHostView(UIView *view) {
         return;
     }
     LiquidGlassView *glass = objc_getAssociatedObject(view, kWidgetGlassKey);
+    BOOL hadGlass = (glass != nil);
+    if (!LGShouldRefreshLiveCaptureForHost(view,
+                                           @"Widgets.RenderingMode",
+                                           kWidgetLastLiveCaptureTimeKey,
+                                           LGWidgetLiveCaptureFPS(),
+                                           hadGlass)) {
+        LGPrepareWidgetGlassHostView(view);
+        glass.cornerRadius = LGWidgetCornerRadius();
+        glass.bezelWidth = LGWidgetBezelWidth();
+        glass.glassThickness = LGWidgetGlassThickness();
+        glass.refractionScale = LGWidgetRefractionScale();
+        glass.refractiveIndex = LGWidgetRefractiveIndex();
+        glass.specularOpacity = LGWidgetSpecularOpacity();
+        glass.blur = LGWidgetBlur();
+        glass.wallpaperScale = LGWidgetWallpaperScale();
+        [view sendSubviewToBack:glass];
+        ensureWidgetTintOverlay(view);
+        [glass updateOrigin];
+        LGProfileEnd(@"widgets.inject", profileStart);
+        return;
+    }
 
     CGPoint wallpaperOrigin = CGPointZero;
     UIImage *wallpaper = LG_getWallpaperImage(&wallpaperOrigin);
@@ -409,6 +445,10 @@ static void LGInjectIntoWidgetGlassHostView(UIView *view) {
         LGProfileEnd(@"widgets.inject", profileStart);
         return;
     }
+    if (LG_prefersLiveCapture(@"Widgets.RenderingMode")) {
+        LGMarkLiveCaptureRefreshedForHost(view, kWidgetLastLiveCaptureTimeKey);
+    }
+    [LGWidgetHostRegistry() addObject:view];
     [view sendSubviewToBack:glass];
     ensureWidgetTintOverlay(view);
     dispatch_async(dispatch_get_main_queue(), ^{
@@ -437,6 +477,18 @@ static void LGWidgetsRefreshAllHosts(void) {
         for (UIWindow *window in LGApplicationWindows(app)) refreshWindow(window);
     }
     LGProfileEnd(@"widgets.refresh_all_hosts", profileStart);
+}
+
+static void LGWidgetsRefreshAttachedHosts(void) {
+    CFTimeInterval profileStart = LGProfileBegin();
+    for (UIView *view in LGWidgetHostRegistry().allObjects) {
+        if (!view.window || !LGIsWidgetGlassHostView(view)) {
+            LGDetachWidgetGlassHostView(view);
+            continue;
+        }
+        LGInjectIntoWidgetGlassHostView(view);
+    }
+    LGProfileEnd(@"widgets.refresh_attached_hosts", profileStart);
 }
 
 static void LGWidgetsPrefsChanged(CFNotificationCenterRef center,
@@ -546,6 +598,10 @@ static void LGWidgetsPrefsChanged(CFNotificationCenterRef center,
         LGRestoreWidgetOriginalState(self_);
         return;
     }
+    if (LG_prefersLiveCapture(@"Widgets.RenderingMode")) {
+        LGInjectIntoWidgetGlassHostView(self_);
+        return;
+    }
     ensureWidgetTintOverlay(self_);
     LiquidGlassView *glass = objc_getAssociatedObject(self_, kWidgetGlassKey);
     [glass updateOrigin];
@@ -604,6 +660,10 @@ static void LGWidgetsPrefsChanged(CFNotificationCenterRef center,
         LGInjectIntoWidgetGlassHostView(host);
         glass = objc_getAssociatedObject(host, kWidgetGlassKey);
         if (!glass) return;
+    }
+    if (LG_prefersLiveCapture(@"Widgets.RenderingMode")) {
+        LGInjectIntoWidgetGlassHostView(host);
+        return;
     }
     ensureWidgetTintOverlay(host);
     [glass updateOrigin];
