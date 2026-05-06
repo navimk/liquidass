@@ -4,10 +4,24 @@
 #import <dlfcn.h>
 #import <math.h>
 #import <objc/runtime.h>
+#import <errno.h>
 #import <fcntl.h>
+#import <signal.h>
+#import <string.h>
 #import <unistd.h>
 #import "Runtime/LGLiquidGlassRuntime.h"
 #import "Runtime/LGSnapshotCaptureSupport.h"
+
+#ifndef PROC_ALL_PIDS
+#define PROC_ALL_PIDS 1
+#endif
+
+#ifndef PROC_PIDPATHINFO_MAXSIZE
+#define PROC_PIDPATHINFO_MAXSIZE 4096
+#endif
+
+extern int proc_listpids(uint32_t type, uint32_t typeinfo, void *buffer, int buffersize);
+extern int proc_name(int pid, void *buffer, uint32_t buffersize);
 
 static BOOL LG_isAtLeastiOS16(void);
 static CFStringRef const LGInvalidateSnapshotCachesNotification = CFSTR("love.litten.liquidass/InvalidateSnapshotCaches");
@@ -1580,7 +1594,48 @@ static void LG_invalidateSnapshotCachesRequested(CFNotificationCenterRef center,
     });
 }
 
+static void LG_killProcessNamed(const char *targetName) {
+    if (!targetName) return;
+
+    int pidBufferSize = proc_listpids(PROC_ALL_PIDS, 0, NULL, 0);
+    if (pidBufferSize <= 0) return;
+
+    NSMutableData *pidData = [NSMutableData dataWithLength:(NSUInteger)pidBufferSize];
+    int bytesReturned = proc_listpids(PROC_ALL_PIDS, 0, pidData.mutableBytes, (int)pidData.length);
+    if (bytesReturned <= 0) return;
+
+    pid_t *pids = (pid_t *)pidData.bytes;
+    int pidCount = bytesReturned / (int)sizeof(pid_t);
+    for (int i = 0; i < pidCount; i++) {
+        pid_t pid = pids[i];
+        if (pid <= 0 || pid == getpid()) continue;
+
+        char processName[PROC_PIDPATHINFO_MAXSIZE] = {0};
+        int nameLength = proc_name(pid, processName, sizeof(processName));
+        if (nameLength <= 0 || strcmp(processName, targetName) != 0) continue;
+
+        if (kill(pid, SIGKILL) != 0) {
+            LGLog(@"failed to kill %s pid %d: %d", targetName, pid, errno);
+        }
+    }
+}
+
+static void LG_killWidgetRendererProcesses(void) {
+    static const char * const processNames[] = {
+        "chronod",
+        "WidgetRenderer_Default",
+        "WidgetRenderer_CarPlay",
+        NULL,
+    };
+
+    for (int i = 0; processNames[i] != NULL; i++) {
+        LG_killProcessNamed(processNames[i]);
+    }
+}
+
 static void LG_requestRespring(void) {
+    LG_killWidgetRendererProcesses();
+
     dlopen("/System/Library/PrivateFrameworks/FrontBoardServices.framework/FrontBoardServices", RTLD_NOW);
     dlopen("/System/Library/PrivateFrameworks/SpringBoardServices.framework/SpringBoardServices", RTLD_NOW);
 
