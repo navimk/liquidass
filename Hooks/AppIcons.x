@@ -14,6 +14,8 @@ static void *kAppIconOriginalTransformKey = &kAppIconOriginalTransformKey;
 static void *kAppIconLastGlassFrameKey = &kAppIconLastGlassFrameKey;
 static void *kAppIconBackdropViewKey = &kAppIconBackdropViewKey;
 static const CGFloat kAppIconImageScale = 0.99;
+static BOOL sAppIconProbePending = NO;
+static CFTimeInterval sAppIconLastProbeTime = 0.0;
 
 LG_ENABLED_BOOL_PREF_FUNC(LGAppIconsEnabled, "AppIcons.Enabled", NO)
 LG_FLOAT_PREF_FUNC(LGAppIconCornerRadius, "AppIcons.CornerRadius", 13.5)
@@ -27,26 +29,78 @@ LG_FLOAT_PREF_FUNC(LGAppIconWallpaperScale, "AppIcons.WallpaperScale", 0.5)
 LG_FLOAT_PREF_FUNC(LGAppIconLightTintAlpha, "AppIcons.LightTintAlpha", 0.1)
 LG_FLOAT_PREF_FUNC(LGAppIconDarkTintAlpha, "AppIcons.DarkTintAlpha", 0.0)
 
-static BOOL LGIsHomescreenIconImageView(UIView *view) {
-    if (!view.window) return NO;
-    if (![NSStringFromClass(view.class) isEqualToString:@"SBIconImageView"]) return NO;
-    if (LGResponderChainContainsClassNamed(view, @"SBFolderViewController")) return NO;
-    if (LGResponderChainContainsClassNamed(view, @"SBAppLibraryViewController")) return NO;
-    if (LGResponderChainContainsClassNamed(view, @"SBHWidgetStackViewController")) return NO;
-    if (LGHasAncestorClassNamed(view, @"SBHWidgetContainerView")) return NO;
-    if (LGHasAncestorClassNamed(view, @"BSUIScrollView")) return NO;
+static NSString *LGAppIconViewSummary(UIView *view) {
+    if (!view) return @"nil";
+    return [NSString stringWithFormat:@"%p %@ frame=%@ bounds=%@ alpha=%.2f hidden=%d ui=%d subviews=%lu",
+            view,
+            NSStringFromClass(view.class),
+            NSStringFromCGRect(view.frame),
+            NSStringFromCGRect(view.bounds),
+            view.alpha,
+            view.hidden,
+            view.userInteractionEnabled,
+            (unsigned long)view.subviews.count];
+}
+
+static NSString *LGAppIconAncestorChain(UIView *view) {
+    NSMutableArray<NSString *> *parts = [NSMutableArray array];
+    UIView *cursor = view;
+    NSUInteger depth = 0;
+    while (cursor && depth < 12) {
+        [parts addObject:NSStringFromClass(cursor.class)];
+        cursor = cursor.superview;
+        depth++;
+    }
+    if (cursor) [parts addObject:@"..."];
+    return [parts componentsJoinedByString:@" <- "];
+}
+
+static NSString *LGAppIconSiblingClasses(UIView *view) {
+    UIView *parent = view.superview;
+    if (!parent) return @"";
+    NSMutableArray<NSString *> *classes = [NSMutableArray array];
+    NSUInteger count = 0;
+    for (UIView *sibling in parent.subviews) {
+        [classes addObject:[NSString stringWithFormat:@"%@%@",
+                            sibling == view ? @"*" : @"",
+                            NSStringFromClass(sibling.class)]];
+        count++;
+        if (count >= 18) {
+            [classes addObject:@"..."];
+            break;
+        }
+    }
+    return [classes componentsJoinedByString:@","];
+}
+
+static NSString *LGAppIconClassificationFailureReason(UIView *view) {
+    if (!view.window) return @"no-window";
+    if (![NSStringFromClass(view.class) isEqualToString:@"SBIconImageView"]) return @"not-SBIconImageView";
+    if (LGResponderChainContainsClassNamed(view, @"SBFolderViewController")) return @"folder-responder";
+    if (LGResponderChainContainsClassNamed(view, @"SBAppLibraryViewController")) return @"app-library-responder";
+    if (LGResponderChainContainsClassNamed(view, @"SBHWidgetStackViewController")) return @"widget-stack-responder";
+    if (LGHasAncestorClassNamed(view, @"SBHWidgetContainerView")) return @"widget-container-ancestor";
+    if (LGHasAncestorClassNamed(view, @"BSUIScrollView")) return @"bsui-scroll-ancestor";
 
     UIView *parent = view.superview;
-    if (!parent) return NO;
-    if (![NSStringFromClass(parent.class) isEqualToString:@"SBFTouchPassThroughView"]) return NO;
-    if (LGResponderChainContainsClassNamed(parent, @"SBHWidgetStackViewController")) return NO;
+    if (!parent) return @"no-parent";
+    if (![NSStringFromClass(parent.class) isEqualToString:@"SBFTouchPassThroughView"]) {
+        return [NSString stringWithFormat:@"parent=%@", NSStringFromClass(parent.class)];
+    }
+    if (LGResponderChainContainsClassNamed(parent, @"SBHWidgetStackViewController")) return @"parent-widget-stack-responder";
+
     UIView *grandparent = parent.superview;
-    if (!grandparent) return NO;
-    if (![NSStringFromClass(grandparent.class) isEqualToString:@"SBIconView"]) return NO;
-    if (LGResponderChainContainsClassNamed(grandparent, @"SBHWidgetStackViewController")) return NO;
+    if (!grandparent) return @"no-grandparent";
+    if (![NSStringFromClass(grandparent.class) isEqualToString:@"SBIconView"]) {
+        return [NSString stringWithFormat:@"grandparent=%@", NSStringFromClass(grandparent.class)];
+    }
+    if (LGResponderChainContainsClassNamed(grandparent, @"SBHWidgetStackViewController")) return @"grandparent-widget-stack-responder";
+
     UIView *iconListView = grandparent.superview;
-    if (!iconListView) return NO;
-    if (![NSStringFromClass(iconListView.class) isEqualToString:@"SBIconListView"]) return NO;
+    if (!iconListView) return @"no-icon-list";
+    if (![NSStringFromClass(iconListView.class) isEqualToString:@"SBIconListView"]) {
+        return [NSString stringWithFormat:@"icon-list=%@", NSStringFromClass(iconListView.class)];
+    }
     BOOL hasMaterialSibling = NO;
     for (UIView *sibling in iconListView.subviews) {
         if (sibling == grandparent) continue;
@@ -55,7 +109,77 @@ static BOOL LGIsHomescreenIconImageView(UIView *view) {
             break;
         }
     }
-    return hasMaterialSibling;
+    return hasMaterialSibling ? nil : @"no-MTMaterialView-sibling";
+}
+
+static BOOL LGIsHomescreenIconImageView(UIView *view) {
+    return LGAppIconClassificationFailureReason(view) == nil;
+}
+
+static void LGScheduleAppIconHierarchyProbe(NSString *reason) {
+    if (!LG_prefBool(@"DebugLogging.Enabled", NO)) return;
+    CFTimeInterval now = CACurrentMediaTime();
+    if (sAppIconProbePending || (now - sAppIconLastProbeTime) < 1.0) return;
+    sAppIconProbePending = YES;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.2 * NSEC_PER_SEC)),
+                   dispatch_get_main_queue(), ^{
+        sAppIconProbePending = NO;
+        sAppIconLastProbeTime = CACurrentMediaTime();
+
+        __block UIWindow *homeWindow = nil;
+        Class homeWindowClass = NSClassFromString(@"SBHomeScreenWindow");
+        if (@available(iOS 13.0, *)) {
+            for (UIScene *scene in UIApplication.sharedApplication.connectedScenes) {
+                if (![scene isKindOfClass:[UIWindowScene class]]) continue;
+                for (UIWindow *window in ((UIWindowScene *)scene).windows) {
+                    if ([window isKindOfClass:homeWindowClass]) {
+                        homeWindow = window;
+                        break;
+                    }
+                }
+                if (homeWindow) break;
+            }
+        }
+        if (!homeWindow) {
+            for (UIWindow *window in UIApplication.sharedApplication.windows) {
+                if ([window isKindOfClass:homeWindowClass]) {
+                    homeWindow = window;
+                    break;
+                }
+            }
+        }
+        if (!homeWindow) {
+            LGDebugLog(@"appicons probe reason=%@ no SBHomeScreenWindow", reason ?: @"unknown");
+            return;
+        }
+
+        __block NSUInteger total = 0;
+        __block NSUInteger accepted = 0;
+        __block NSMutableDictionary<NSString *, NSNumber *> *failures = [NSMutableDictionary dictionary];
+        LGTraverseViews(homeWindow, ^(UIView *view) {
+            if (![NSStringFromClass(view.class) isEqualToString:@"SBIconImageView"]) return;
+            total++;
+            NSString *failure = LGAppIconClassificationFailureReason(view);
+            if (!failure) accepted++;
+            else failures[failure] = @([failures[failure] unsignedIntegerValue] + 1);
+
+            LGDebugLog(@"appicons probe item accepted=%d failure=%@ view=%@ parent=%@ grandparent=%@ chain=%@ parentSiblings=%@ grandparentSiblings=%@",
+                       failure == nil,
+                       failure ?: @"",
+                       LGAppIconViewSummary(view),
+                       LGAppIconViewSummary(view.superview),
+                       LGAppIconViewSummary(view.superview.superview),
+                       LGAppIconAncestorChain(view),
+                       LGAppIconSiblingClasses(view),
+                       LGAppIconSiblingClasses(view.superview.superview));
+        });
+        LGDebugLog(@"appicons probe summary reason=%@ window=%@ total=%lu accepted=%lu failures=%@",
+                   reason ?: @"unknown",
+                   LGAppIconViewSummary(homeWindow),
+                   (unsigned long)total,
+                   (unsigned long)accepted,
+                   failures);
+    });
 }
 
 static UIView *LGAppIconHostView(UIView *view) {
@@ -221,6 +345,7 @@ static void injectIntoAppIcon(UIView *view) {
 - (void)didMoveToWindow {
     %orig;
     UIView *self_ = (UIView *)self;
+    LGScheduleAppIconHierarchyProbe(@"icon-didMoveToWindow");
     if (!self_.window) {
         removeAppIconOverlays(self_);
         return;
@@ -235,6 +360,7 @@ static void injectIntoAppIcon(UIView *view) {
 - (void)layoutSubviews {
     %orig;
     UIView *self_ = (UIView *)self;
+    LGScheduleAppIconHierarchyProbe(@"icon-layout");
     if (!LGIsHomescreenIconImageView(self_)) {
         removeAppIconOverlays(self_);
         return;
@@ -278,15 +404,31 @@ static void injectIntoAppIcon(UIView *view) {
 
 %end
 
+%hook SBHomeScreenWindow
+
+- (void)didMoveToWindow {
+    %orig;
+    LGScheduleAppIconHierarchyProbe(@"home-window-didMoveToWindow");
+}
+
+- (void)layoutSubviews {
+    %orig;
+    LGScheduleAppIconHierarchyProbe(@"home-window-layout");
+}
+
+%end
+
 %hook SBIconScrollView
 
 - (void)setContentOffset:(CGPoint)offset {
     %orig;
+    LGScheduleAppIconHierarchyProbe(@"icon-scroll-offset");
     LG_updateRegisteredGlassViews(LGUpdateGroupAppIcons);
 }
 
 - (void)setContentOffset:(CGPoint)offset animated:(BOOL)animated {
     %orig;
+    LGScheduleAppIconHierarchyProbe(@"icon-scroll-offset-animated");
     LG_updateRegisteredGlassViews(LGUpdateGroupAppIcons);
 }
 

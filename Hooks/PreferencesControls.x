@@ -342,6 +342,65 @@ static UINavigationController *LGSettingsNavigationControllerForView(UIView *vie
     return nil;
 }
 
+static BOOL LGSettingsInvokeControlActions(UIControl *control) {
+    if (!control) return NO;
+    NSSet *targets = control.allTargets;
+    if (!targets.count) return NO;
+    [control sendActionsForControlEvents:UIControlEventTouchUpInside];
+    return YES;
+}
+
+static BOOL LGSettingsInvokeGestureActions(UIView *view) {
+    for (UIGestureRecognizer *recognizer in view.gestureRecognizers) {
+        if (!recognizer.enabled) continue;
+        NSArray *targets = nil;
+        @try {
+            targets = [recognizer valueForKey:@"_targets"];
+        } @catch (__unused NSException *exception) {
+            targets = nil;
+        }
+        for (id targetAction in targets) {
+            id target = nil;
+            NSString *actionName = nil;
+            @try {
+                target = [targetAction valueForKey:@"target"];
+                actionName = [targetAction valueForKey:@"action"];
+            } @catch (__unused NSException *exception) {
+                target = nil;
+                actionName = nil;
+            }
+            SEL action = NSSelectorFromString(actionName);
+            if (target && action && [target respondsToSelector:action]) {
+                ((void (*)(id, SEL, id))objc_msgSend)(target, action, recognizer);
+                return YES;
+            }
+        }
+    }
+    return NO;
+}
+
+static BOOL LGSettingsInvokeStockBackButtonAction(UIView *buttonBarButton) {
+    if (!buttonBarButton) return NO;
+    if ([buttonBarButton isKindOfClass:[UIControl class]] &&
+        LGSettingsInvokeControlActions((UIControl *)buttonBarButton)) {
+        return YES;
+    }
+    if (LGSettingsInvokeGestureActions(buttonBarButton)) {
+        return YES;
+    }
+    for (UIView *subview in buttonBarButton.subviews) {
+        if (LGHasAncestorClass(subview, [LGSharedBackButtonView class])) continue;
+        if ([subview isKindOfClass:[UIControl class]] &&
+            LGSettingsInvokeControlActions((UIControl *)subview)) {
+            return YES;
+        }
+        if (LGSettingsInvokeGestureActions(subview)) {
+            return YES;
+        }
+    }
+    return NO;
+}
+
 static void LGSettingsStopBackButtonDisplayLinkIfIdle(void) {
     if (sLGSettingsBackButtonGlassViews.count > 0) return;
     LGStopDisplayLink(&sLGSettingsBackButtonDisplayLink, &sLGSettingsBackButtonDisplayLinkDriver);
@@ -2319,29 +2378,14 @@ static void LGUpdateSettingsSliderVisualElement(UIView *host) {
 
 %new
 - (void)lg_activateLiquidAssSettingsBackButton {
+    if (LGSettingsInvokeStockBackButtonAction((UIView *)self)) {
+        return;
+    }
+
     UINavigationController *navigationController = LGSettingsNavigationControllerForView((UIView *)self);
     if (navigationController.viewControllers.count > 1) {
         [navigationController popViewControllerAnimated:YES];
         return;
-    }
-
-    if ([(id)self isKindOfClass:[UIControl class]]) {
-        [(UIControl *)self sendActionsForControlEvents:UIControlEventTouchUpInside];
-        return;
-    }
-
-    for (UIGestureRecognizer *recognizer in ((UIView *)self).gestureRecognizers) {
-        if (!recognizer.enabled) continue;
-        NSArray *targets = [recognizer valueForKey:@"_targets"];
-        for (id targetAction in targets) {
-            id target = [targetAction valueForKey:@"target"];
-            NSString *actionName = [targetAction valueForKey:@"action"];
-            SEL action = NSSelectorFromString(actionName);
-            if (target && action && [target respondsToSelector:action]) {
-                ((void (*)(id, SEL, id))objc_msgSend)(target, action, recognizer);
-                return;
-            }
-        }
     }
 }
 

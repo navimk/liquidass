@@ -611,6 +611,54 @@ NSString *LGFormatSliderValue(CGFloat value, NSInteger decimals) {
     return [NSString stringWithFormat:[NSString stringWithFormat:@"%%.%ldf", (long)decimals], value];
 }
 
+static NSString *LGSurfaceGroupSortTitle(NSArray<NSDictionary *> *items) {
+    for (NSDictionary *item in items) {
+        if ([item[@"type"] isEqualToString:@"section"]) {
+            NSString *title = item[@"title"];
+            if (title.length) return title;
+        }
+    }
+    NSString *title = items.firstObject[@"title"];
+    return title ?: @"";
+}
+
+static NSArray<NSDictionary *> *LGSurfaceItemsBySortingSectionGroups(NSArray<NSDictionary *> *items) {
+    NSMutableArray<NSDictionary *> *leadingItems = [NSMutableArray array];
+    NSMutableArray<NSArray<NSDictionary *> *> *groups = [NSMutableArray array];
+    NSMutableArray<NSDictionary *> *currentGroup = nil;
+    for (NSDictionary *item in items) {
+        if ([item[@"type"] isEqualToString:@"section"]) {
+            if (currentGroup.count) {
+                [groups addObject:[currentGroup copy]];
+            }
+            currentGroup = [NSMutableArray arrayWithObject:item];
+            continue;
+        }
+        if (currentGroup) {
+            [currentGroup addObject:item];
+        } else {
+            [leadingItems addObject:item];
+        }
+    }
+    if (currentGroup.count) {
+        [groups addObject:[currentGroup copy]];
+    }
+
+    NSArray<NSArray<NSDictionary *> *> *sortedGroups = [groups sortedArrayUsingComparator:^NSComparisonResult(NSArray<NSDictionary *> *lhs,
+                                                                                                               NSArray<NSDictionary *> *rhs) {
+        NSString *leftTitle = LGSurfaceGroupSortTitle(lhs);
+        NSString *rightTitle = LGSurfaceGroupSortTitle(rhs);
+        NSComparisonResult result = [leftTitle localizedCaseInsensitiveCompare:rightTitle];
+        if (result != NSOrderedSame) return result;
+        return [leftTitle compare:rightTitle];
+    }];
+    NSMutableArray<NSDictionary *> *sortedItems = [leadingItems mutableCopy];
+    for (NSArray<NSDictionary *> *group in sortedGroups) {
+        [sortedItems addObjectsFromArray:group];
+    }
+    return [sortedItems copy];
+}
+
 NSArray<NSDictionary *> *LGDockItems(void) {
     return @[
         LGGlassEnabledSetting(@"Dock.Enabled", YES),
@@ -1076,11 +1124,11 @@ NSArray<NSDictionary *> *LGLockscreenItems(void) {
                                              @"Lockscreen.Clock.DateFormat.Enabled",
                                              @YES)];
 
-    return [items copy];
+    return LGSurfaceItemsBySortingSectionGroups(items);
 }
 
 NSArray<NSDictionary *> *LGAppLibraryItems(void) {
-    return @[
+    return LGSurfaceItemsBySortingSectionGroups(@[
         LGScopedFPSSliderSetting(@"AppLibrary.FPS"),
         LGSectionSetting(LGLocalized(@"prefs.section.category_pods.title"), LGLocalized(@"prefs.section.category_pods.subtitle")),
         LGGlassEnabledSetting(@"AppLibrary.Enabled", YES),
@@ -1106,7 +1154,7 @@ NSArray<NSDictionary *> *LGAppLibraryItems(void) {
         LGGlassRefractionSetting(@"AppLibrary.SearchRefractionScale", 1.5, 0.5, 3.0, 2),
         LGGlassSpecularSetting(@"AppLibrary.SearchSpecularOpacity", 0.6, 0.0, 1.0, 2),
         LGGlassQualitySetting(@"AppLibrary.SearchWallpaperScale", 0.1, 0.1, 1.0, 2),
-    ];
+    ]);
 }
 
 NSArray<NSDictionary *> *LGWidgetItems(void) {
@@ -1148,7 +1196,7 @@ NSArray<NSDictionary *> *LGHomescreenItems(void) {
     [items addObject:LGSectionSetting(LGLocalized(@"prefs.section.widgets.title"), LGLocalized(@"prefs.section.widgets.subtitle"))];
     [items addObjectsFromArray:LGWidgetItems()];
     [items addObjectsFromArray:LGAppIconItems()];
-    return [items copy];
+    return LGSurfaceItemsBySortingSectionGroups(items);
 }
 
 NSArray<NSDictionary *> *LGAllSurfaceItems(void) {
