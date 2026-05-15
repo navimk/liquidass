@@ -53,7 +53,64 @@ void LGTraverseViews(UIView *root, void (^block)(UIView *view)) {
     }
 }
 
+static NSString *LGCustomTintKeyForOverrideKey(NSString *overrideKey) {
+    if (!overrideKey.length) return nil;
+    NSString *suffix = @".TintOverrideMode";
+    if (![overrideKey hasSuffix:suffix]) return nil;
+    return [[overrideKey substringToIndex:(overrideKey.length - suffix.length)] stringByAppendingString:@".CustomTintColor"];
+}
+
+static UIColor *LGColorFromTintString(NSString *string) {
+    NSString *trimmed = [string stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+    if (!trimmed.length) return nil;
+    if ([trimmed hasPrefix:@"#"]) {
+        trimmed = [trimmed substringFromIndex:1];
+    }
+    if ([trimmed hasPrefix:@"0x"] || [trimmed hasPrefix:@"0X"]) {
+        trimmed = [trimmed substringFromIndex:2];
+    }
+
+    if (trimmed.length == 3 || trimmed.length == 4) {
+        NSMutableString *expanded = [NSMutableString stringWithCapacity:(trimmed.length * 2)];
+        for (NSUInteger index = 0; index < trimmed.length; index++) {
+            unichar character = [trimmed characterAtIndex:index];
+            [expanded appendFormat:@"%C%C", character, character];
+        }
+        trimmed = expanded;
+    }
+
+    if (trimmed.length != 6 && trimmed.length != 8) return nil;
+
+    unsigned long long value = 0;
+    NSScanner *scanner = [NSScanner scannerWithString:trimmed];
+    if (![scanner scanHexLongLong:&value] || !scanner.isAtEnd) return nil;
+
+    CGFloat red = 0.0;
+    CGFloat green = 0.0;
+    CGFloat blue = 0.0;
+    CGFloat alpha = 1.0;
+    if (trimmed.length == 8) {
+        red = (CGFloat)((value >> 24) & 0xFF) / 255.0;
+        green = (CGFloat)((value >> 16) & 0xFF) / 255.0;
+        blue = (CGFloat)((value >> 8) & 0xFF) / 255.0;
+        alpha = (CGFloat)(value & 0xFF) / 255.0;
+    } else {
+        red = (CGFloat)((value >> 16) & 0xFF) / 255.0;
+        green = (CGFloat)((value >> 8) & 0xFF) / 255.0;
+        blue = (CGFloat)(value & 0xFF) / 255.0;
+    }
+    return [UIColor colorWithRed:red green:green blue:blue alpha:alpha];
+}
+
+UIColor *LGCustomTintColorForKey(NSString *key) {
+    if (!key.length) return nil;
+    return LGColorFromTintString(LG_prefString(key, @""));
+}
+
 UIColor *LGDefaultTintColorForViewWithOverrideKey(UIView *view, CGFloat lightAlpha, CGFloat darkAlpha, NSString *overrideKey) {
+    UIColor *customTint = LGCustomTintColorForKey(LGCustomTintKeyForOverrideKey(overrideKey));
+    if (customTint) return customTint;
+
     NSString *override = nil;
     if (overrideKey.length) {
         override = LG_prefString(overrideKey, LGTintOverrideSystem);

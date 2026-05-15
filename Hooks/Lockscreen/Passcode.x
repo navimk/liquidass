@@ -195,8 +195,9 @@ static void LGApplyPasscodeBackgroundIfNeeded(UIView *view) {
                                            0,
                                            host.bounds,
                                            UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight);
+    UIColor *customTint = LGCustomTintColorForKey(@"Lockscreen.Passcode.CustomTintColor");
     LGConfigureTintOverlayView(tint,
-                               [UIColor colorWithWhite:0.0 alpha:LGPasscodeBackgroundDarkTintAlpha()],
+                               customTint ?: [UIColor colorWithWhite:0.0 alpha:LGPasscodeBackgroundDarkTintAlpha()],
                                0.0,
                                host.layer,
                                NO);
@@ -319,6 +320,9 @@ static void LGSyncPasscodePresentationState(UIView *view) {
 }
 
 static UIColor *LGPasscodeButtonTargetTint(BOOL highlighted) {
+    UIColor *customTint = LGCustomTintColorForKey(@"Lockscreen.Passcode.CustomTintColor");
+    if (customTint) return customTint;
+
     return highlighted
         ? [UIColor colorWithWhite:1.0 alpha:LGPasscodeActiveLightTintAlpha()]
         : [UIColor colorWithWhite:0.0 alpha:LGPasscodeDarkTintAlpha()];
@@ -524,7 +528,7 @@ static void LGInjectPasscodeButtonIfNeeded(UIView *button) {
                                            host.bounds,
                                            UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight);
     LGConfigureTintOverlayView(tint,
-                               [UIColor colorWithWhite:0.0 alpha:LGPasscodeDarkTintAlpha()],
+                               LGPasscodeButtonTargetTint(NO),
                                cornerRadius,
                                host.layer,
                                NO);

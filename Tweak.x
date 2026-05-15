@@ -337,6 +337,7 @@ static NSString * const kLGContextMenuSnapshotImageCacheKey = @"context.snapshot
 static NSString * const kLGFolderSnapshotImageCacheKey = @"folder.snapshot";
 static NSString * const kLGHomeWallpaperImageCacheKey = @"wallpaper.home";
 static NSString * const kLGLockWallpaperImageCacheKey = @"wallpaper.lock";
+static NSString * const kLGHomescreenWallpaperFlatFilePath = @"/tmp/LGHomeWallpaper.png";
 static NSString * const kLGLockscreenWallpaperFlatFilePath = @"/tmp/LGLockscreenWallpaper.png";
 static NSString * const kLGRuntimeCacheUsageBytesKey = @"__runtime_cache_usage_bytes";
 static unsigned long long sLastPublishedRuntimeCacheUsageBytes = ULLONG_MAX;
@@ -435,6 +436,58 @@ static void LGSetCachedSpringBoardLockImageValue(UIImage *image) {
     LGSetCachedTransientImage(kLGLockWallpaperImageCacheKey, image);
 }
 
+static UIImage *LG_loadFlattenedHomescreenWallpaperFile(void) {
+    NSString *path = kLGHomescreenWallpaperFlatFilePath;
+    NSDictionary *attrs = [[NSFileManager defaultManager] attributesOfItemAtPath:path error:nil];
+    NSDate *mtime = attrs[NSFileModificationDate];
+    if (sCachedSpringBoardHomeImage &&
+        [sCachedSpringBoardHomePath isEqualToString:path] &&
+        ((!mtime && !sCachedSpringBoardHomeMTime) || [sCachedSpringBoardHomeMTime isEqualToDate:mtime])) {
+        return sCachedSpringBoardHomeImage;
+    }
+
+    UIImage *image = [UIImage imageWithContentsOfFile:path];
+    if (!image) return nil;
+    CGImageRef imageRef = image.CGImage;
+    CGFloat screenScale = UIScreen.mainScreen.scale ?: 1.0;
+    CGSize screenSize = UIScreen.mainScreen.bounds.size;
+    size_t expectedWidth = MAX((size_t)1, (size_t)lrint(screenSize.width * screenScale));
+    size_t expectedHeight = MAX((size_t)1, (size_t)lrint(screenSize.height * screenScale));
+    if (!imageRef ||
+        CGImageGetWidth(imageRef) != expectedWidth ||
+        CGImageGetHeight(imageRef) != expectedHeight) {
+        [[NSFileManager defaultManager] removeItemAtPath:path error:nil];
+        return nil;
+    }
+    image = [UIImage imageWithCGImage:imageRef scale:screenScale orientation:UIImageOrientationUp];
+    NSTimeInterval timestamp = mtime ? mtime.timeIntervalSince1970 : 0.0;
+    NSString *cacheKey = [NSString stringWithFormat:@"wallpaper:home-flat:%0.3f:%@",
+                          timestamp,
+                          path.lastPathComponent ?: @"(null)"];
+    LGSetImageStableCacheKey(image, cacheKey);
+    LGSetCachedSpringBoardHomeImageValue(image);
+    sCachedSpringBoardHomeMTime = mtime;
+    sCachedSpringBoardHomePath = [path copy];
+    return image;
+}
+
+static void LG_storeFlattenedHomescreenWallpaperFile(UIImage *image) {
+    if (!image) return;
+    NSString *path = kLGHomescreenWallpaperFlatFilePath;
+    NSTimeInterval timestamp = CACurrentMediaTime();
+    LGSetImageStableCacheKey(image, [NSString stringWithFormat:@"wallpaper:home-flat-live:%0.6f", timestamp]);
+    LGSetCachedSpringBoardHomeImageValue(image);
+    sCachedSpringBoardHomePath = [path copy];
+    sCachedSpringBoardHomeMTime = [NSDate date];
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
+        @autoreleasepool {
+            NSData *pngData = UIImagePNGRepresentation(image);
+            if (!pngData) return;
+            [pngData writeToFile:path atomically:YES];
+        }
+    });
+}
+
 static UIImage *LG_loadFlattenedLockscreenWallpaperFile(void) {
     NSString *path = kLGLockscreenWallpaperFlatFilePath;
     NSDictionary *attrs = [[NSFileManager defaultManager] attributesOfItemAtPath:path error:nil];
@@ -447,6 +500,18 @@ static UIImage *LG_loadFlattenedLockscreenWallpaperFile(void) {
 
     UIImage *image = [UIImage imageWithContentsOfFile:path];
     if (!image) return nil;
+    CGImageRef imageRef = image.CGImage;
+    CGFloat screenScale = UIScreen.mainScreen.scale ?: 1.0;
+    CGSize screenSize = UIScreen.mainScreen.bounds.size;
+    size_t expectedWidth = MAX((size_t)1, (size_t)lrint(screenSize.width * screenScale));
+    size_t expectedHeight = MAX((size_t)1, (size_t)lrint(screenSize.height * screenScale));
+    if (!imageRef ||
+        CGImageGetWidth(imageRef) != expectedWidth ||
+        CGImageGetHeight(imageRef) != expectedHeight) {
+        [[NSFileManager defaultManager] removeItemAtPath:path error:nil];
+        return nil;
+    }
+    image = [UIImage imageWithCGImage:imageRef scale:screenScale orientation:UIImageOrientationUp];
     NSTimeInterval timestamp = mtime ? mtime.timeIntervalSince1970 : 0.0;
     NSString *cacheKey = [NSString stringWithFormat:@"wallpaper:lock-flat:%0.3f:%@",
                           timestamp,
@@ -858,6 +923,11 @@ UIImage *LG_getWallpaperImage(CGPoint *outOriginInScreenPts) {
         }
         return asset;
     }
+    UIImage *flatImage = LG_loadFlattenedHomescreenWallpaperFile();
+    if (flatImage) {
+        if (outOriginInScreenPts) *outOriginInScreenPts = CGPointZero;
+        return flatImage;
+    }
     UIWindow *win = LG_getWallpaperWindow(NO);
     if (!win) return nil;
     UIImageView *iv = LG_getWallpaperImageView(win, NO);
@@ -917,6 +987,12 @@ static BOOL LG_drawHomescreenWallpaperInContext(CGSize screenSize) {
             ? LG_centeredWallpaperOriginForImage(asset)
             : LG_getHomescreenWallpaperOriginForImage(asset);
         LG_drawWallpaperImageInContext(asset, origin);
+        return YES;
+    }
+
+    UIImage *flatImage = LG_loadFlattenedHomescreenWallpaperFile();
+    if (flatImage) {
+        [flatImage drawInRect:bounds];
         return YES;
     }
 
@@ -1000,6 +1076,17 @@ void LG_refreshHomescreenSnapshot(void) {
         return;
     }
 
+    UIImage *flatImage = LG_loadFlattenedHomescreenWallpaperFile();
+    if (flatImage) {
+        LGDebugLog(@"refresh homescreen snapshot source=flat-file image=%@ scale=%.2f orientation=%ld",
+                   NSStringFromCGSize(flatImage.size),
+                   flatImage.scale,
+                   (long)flatImage.imageOrientation);
+        LGSetCachedSnapshotImage(flatImage);
+        LGProfileEnd(@"homescreen.snapshot_refresh", profileStart);
+        return;
+    }
+
     CGSize screenSize = UIScreen.mainScreen.bounds.size;
     CGFloat scale     = UIScreen.mainScreen.scale;
 
@@ -1017,6 +1104,7 @@ void LG_refreshHomescreenSnapshot(void) {
                NSStringFromCGSize(img.size),
                img.scale,
                (long)img.imageOrientation);
+    LG_storeFlattenedHomescreenWallpaperFile(img);
     LGSetCachedSnapshotImage(img);
     LGProfileEnd(@"homescreen.snapshot_refresh", profileStart);
 }
@@ -1157,6 +1245,7 @@ static void LGResetHomescreenSnapshotCaches(void) {
     sSnapshotRetryToken++;
     sSnapshotRetryScheduled = NO;
     sSnapshotRetryCount = 0;
+    [[NSFileManager defaultManager] removeItemAtPath:kLGHomescreenWallpaperFlatFilePath error:nil];
     LGClearGlassTextureCache();
 }
 
@@ -1428,6 +1517,8 @@ UIImage *LG_getHomescreenSnapshot(CGPoint *outOriginInScreenPts) {
         *outOriginInScreenPts = LG_isCPBitmapPath(LG_preferredSpringBoardWallpaperPath(NO))
             ? LG_centeredWallpaperOriginForImage(asset)
             : LG_getHomescreenWallpaperOriginForImage(asset);
+    } else if (LG_loadFlattenedHomescreenWallpaperFile() && outOriginInScreenPts) {
+        *outOriginInScreenPts = CGPointZero;
     } else if (outOriginInScreenPts) {
         *outOriginInScreenPts = CGPointZero;
     }

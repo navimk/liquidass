@@ -7,6 +7,7 @@
 "prefs.control.glass_thickness" = "玻璃厚度";
 "prefs.control.light_tint_alpha" = "浅色着色透明度";
 "prefs.control.dark_tint_alpha" = "深色着色透明度";
+"prefs.control.custom_tint_color" = "Custom Tint Color";
 "prefs.control.refractive_index" = "折射率";
 "prefs.control.refraction" = "折射";
 "prefs.control.specular" = "高光";
@@ -39,6 +40,7 @@
 "prefs.subtitle.glass_thickness" = "玻璃体积的深度，视觉上变化不大";
 "prefs.subtitle.light_tint_alpha" = "浅色模式下的白色叠加强度";
 "prefs.subtitle.dark_tint_alpha" = "深色模式下的黑色叠加强度";
+"prefs.subtitle.custom_tint_color" = "Hex RGB/RGBA. Empty uses light/dark tint.";
 "prefs.subtitle.refractive_index" = "玻璃效果的光学密度";
 "prefs.subtitle.refraction" = "背景在玻璃视图中的弯曲效果";
 "prefs.subtitle.specular" = "玻璃视图上的高光强度";

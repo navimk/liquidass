@@ -1,6 +1,7 @@
 #import "LGBackButtonSupport.h"
 #import "LGBannerCaptureSupport.h"
 #import "LGGlassRenderer.h"
+#import "LGHookSupport.h"
 #import <QuartzCore/QuartzCore.h>
 #import <objc/message.h>
 #import <objc/runtime.h>
@@ -233,7 +234,7 @@ UIView *LGBackButtonPreferredContainerView(UIView *view) {
 
     _tintView = [[UIView alloc] initWithFrame:self.bounds];
     _tintView.userInteractionEnabled = NO;
-    _tintView.backgroundColor = [UIColor colorWithWhite:1.0 alpha:0.10];
+    _tintView.backgroundColor = LGCustomTintColorForKey(@"Preferences.BackButton.CustomTintColor") ?: [UIColor colorWithWhite:1.0 alpha:0.10];
     _tintView.layer.cornerRadius = 19.0;
     _tintView.layer.cornerCurve = kCACornerCurveContinuous;
     _tintView.layer.borderWidth = 0.75;
@@ -299,6 +300,7 @@ UIView *LGBackButtonPreferredContainerView(UIView *view) {
     self.blurView.layer.cornerRadius = side * 0.5;
     LGApplyLowBlurRadiusToView(self.blurView);
     self.tintView.frame = self.glassView.bounds;
+    self.tintView.backgroundColor = LGCustomTintColorForKey(@"Preferences.BackButton.CustomTintColor") ?: [UIColor colorWithWhite:1.0 alpha:0.10];
     self.tintView.layer.cornerRadius = side * 0.5;
     self.glyphView.frame = CGRectMake(floor((CGRectGetWidth(self.bounds) - 22.0) * 0.5) + self.glyphHorizontalOffset,
                                       floor((CGRectGetHeight(self.bounds) - 22.0) * 0.5),

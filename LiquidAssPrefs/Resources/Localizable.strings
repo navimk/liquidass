@@ -7,6 +7,7 @@
 "prefs.control.glass_thickness" = "Glass Thickness";
 "prefs.control.light_tint_alpha" = "Light Tint Alpha";
 "prefs.control.dark_tint_alpha" = "Dark Tint Alpha";
+"prefs.control.custom_tint_color" = "Custom Tint Color";
 "prefs.control.refractive_index" = "Refractive Index";
 "prefs.control.refraction" = "Refraction";
 "prefs.control.specular" = "Specular";
@@ -56,6 +57,7 @@
 "prefs.subtitle.glass_thickness" = "Depth of the glass volume, visually it does not change anything much.";
 "prefs.subtitle.light_tint_alpha" = "White overlay strength in light mode.";
 "prefs.subtitle.dark_tint_alpha" = "Black overlay strength in dark mode.";
+"prefs.subtitle.custom_tint_color" = "Hex RGB/RGBA. Empty uses light/dark tint.";
 "prefs.subtitle.refractive_index" = "Optical density of the glass effect.";
 "prefs.subtitle.refraction" = "Backdrop bending through the glass view.";
 "prefs.subtitle.specular" = "Highlight strength on the glass view.";

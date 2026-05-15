@@ -3,6 +3,7 @@
 #import "../Shared/LGBackButtonSupport.h"
 #import "../Shared/LGBannerCaptureSupport.h"
 #import "../Shared/LGGlassRenderer.h"
+#import "../Shared/LGHookSupport.h"
 #import "../Shared/LGSharedSupport.h"
 #import <notify.h>
 #import <objc/message.h>
@@ -62,6 +63,7 @@ void * const kLGControlledByEnabledKey = (void *)&kLGControlledByEnabledKey;
 static UIView *LGMakeRespringBar(id target, SEL respringAction, SEL laterAction);
 static void *kLGRespringBarGlassViewKey = &kLGRespringBarGlassViewKey;
 static void *kLGRespringBarBlurViewKey = &kLGRespringBarBlurViewKey;
+static void *kLGRespringBarTintViewKey = &kLGRespringBarTintViewKey;
 static void *kLGRespringBarBackdropViewKey = &kLGRespringBarBackdropViewKey;
 static void *kLGRespringBarLiveReadyKey = &kLGRespringBarLiveReadyKey;
 static NSNumber *LGParseLocalizedDecimalString(NSString *rawText);
@@ -138,6 +140,14 @@ void LGRefreshRespringBarGlass(UIView *respringBar) {
     if (!respringBar) return;
     LGSharedGlassView *glassView = objc_getAssociatedObject(respringBar, kLGRespringBarGlassViewKey);
     UIView *blurView = objc_getAssociatedObject(respringBar, kLGRespringBarBlurViewKey);
+    UIView *tintView = objc_getAssociatedObject(respringBar, kLGRespringBarTintViewKey);
+    UIColor *customTint = LGCustomTintColorForKey(@"Preferences.RespringBar.CustomTintColor");
+    tintView.backgroundColor = customTint ?: [UIColor colorWithDynamicProvider:^UIColor * _Nonnull(UITraitCollection * _Nonnull trait) {
+        if (trait.userInterfaceStyle == UIUserInterfaceStyleDark) {
+            return [[UIColor whiteColor] colorWithAlphaComponent:0.04];
+        }
+        return [[UIColor blackColor] colorWithAlphaComponent:0.01];
+    }];
     BOOL glassEnabled = [LGReadPreference(@"Preferences.RespringBar.Enabled", @NO) boolValue];
     BOOL liveReady = [objc_getAssociatedObject(respringBar, kLGRespringBarLiveReadyKey) boolValue];
     glassView.hidden = !glassEnabled || !liveReady;
@@ -1268,13 +1278,15 @@ static UIView *LGMakeRespringBar(id target, SEL respringAction, SEL laterAction)
     UIView *tintView = [[UIView alloc] initWithFrame:CGRectZero];
     tintView.translatesAutoresizingMaskIntoConstraints = NO;
     tintView.userInteractionEnabled = NO;
-    tintView.backgroundColor = [UIColor colorWithDynamicProvider:^UIColor * _Nonnull(UITraitCollection * _Nonnull trait) {
+    UIColor *customTint = LGCustomTintColorForKey(@"Preferences.RespringBar.CustomTintColor");
+    tintView.backgroundColor = customTint ?: [UIColor colorWithDynamicProvider:^UIColor * _Nonnull(UITraitCollection * _Nonnull trait) {
         if (trait.userInterfaceStyle == UIUserInterfaceStyleDark) {
             return [[UIColor whiteColor] colorWithAlphaComponent:0.04];
         }
         return [[UIColor blackColor] colorWithAlphaComponent:0.01];
     }];
     [card addSubview:tintView];
+    objc_setAssociatedObject(card, kLGRespringBarTintViewKey, tintView, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
 
     UILabel *titleLabel = [[UILabel alloc] initWithFrame:CGRectZero];
     titleLabel.translatesAutoresizingMaskIntoConstraints = NO;

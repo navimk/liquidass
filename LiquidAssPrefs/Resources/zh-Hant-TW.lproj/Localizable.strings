@@ -16,6 +16,7 @@
 "prefs.control.date_vertical_offset" = "Date Vertical Offset";
 "prefs.control.corner_radius" = "圓角半徑";
 "prefs.control.dark_tint_alpha" = "深色色調透明度";
+"prefs.control.custom_tint_color" = "Custom Tint Color";
 "prefs.control.embolden" = "加粗";
 "prefs.control.enabled" = "啟用";
 "prefs.control.floating_radius" = "懸浮圓角";
@@ -167,6 +168,7 @@
 "prefs.subtitle.date_vertical_offset" = "Shifts the lockscreen date upward.";
 "prefs.subtitle.corner_radius" = "玻璃視圖的圓潤程度";
 "prefs.subtitle.dark_tint_alpha" = "深色模式下黑色疊加的強度";
+"prefs.subtitle.custom_tint_color" = "Hex RGB/RGBA. Empty uses light/dark tint.";
 "prefs.subtitle.embolden" = "人為加粗傳統時鐘遮罩，使其看起來更飽滿。";
 "prefs.subtitle.enabled" = "啟用或關閉此玻璃視圖";
 "prefs.subtitle.floating_radius" = "懸浮模式下玻璃視圖的圓角程度";

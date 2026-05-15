@@ -6,6 +6,7 @@
 #import "../Shared/LGRWBSupport.h"
 #import "../Shared/LGBannerCaptureSupport.h"
 #import "../Shared/LGGlassRenderer.h"
+#import "../Shared/LGHookSupport.h"
 #import "../Shared/LGSharedSupport.h"
 #import "../Shared/LGBackButtonSupport.h"
 #import <QuartzCore/QuartzCore.h>
@@ -26,6 +27,7 @@ static void *kLGPanelItemKey = &kLGPanelItemKey;
 static void *kLGScrollTopBackdropViewKey = &kLGScrollTopBackdropViewKey;
 static void *kLGScrollTopGlassViewKey = &kLGScrollTopGlassViewKey;
 static void *kLGScrollTopBlurViewKey = &kLGScrollTopBlurViewKey;
+static void *kLGScrollTopTintViewKey = &kLGScrollTopTintViewKey;
 static void *kLGScrollTopLiveReadyKey = &kLGScrollTopLiveReadyKey;
 static void *kLGDonationAddressKey = &kLGDonationAddressKey;
 
@@ -575,12 +577,13 @@ static BOOL LGItemVisibleForCurrentPreferences(NSDictionary *item) {
     UIView *tintView = [[UIView alloc] initWithFrame:CGRectZero];
     tintView.translatesAutoresizingMaskIntoConstraints = NO;
     tintView.userInteractionEnabled = NO;
-    tintView.backgroundColor = [UIColor colorWithWhite:1.0 alpha:0.10];
+    tintView.backgroundColor = LGCustomTintColorForKey(@"Preferences.GoToTop.CustomTintColor") ?: [UIColor colorWithWhite:1.0 alpha:0.10];
     tintView.layer.cornerRadius = 19.0;
     tintView.layer.cornerCurve = kCACornerCurveContinuous;
     tintView.layer.borderWidth = 0.75;
     tintView.layer.borderColor = [[UIColor separatorColor] colorWithAlphaComponent:0.14].CGColor;
     [container addSubview:tintView];
+    objc_setAssociatedObject(container, kLGScrollTopTintViewKey, tintView, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
 
     UIImageSymbolConfiguration *config =
         [UIImageSymbolConfiguration configurationWithPointSize:13.0 weight:UIImageSymbolWeightSemibold];
@@ -628,6 +631,8 @@ static BOOL LGItemVisibleForCurrentPreferences(NSDictionary *item) {
     LGSharedGlassView *glassView = objc_getAssociatedObject(_scrollTopButton, kLGScrollTopGlassViewKey);
     if (!glassView) return;
     UIView *blurView = objc_getAssociatedObject(_scrollTopButton, kLGScrollTopBlurViewKey);
+    UIView *tintView = objc_getAssociatedObject(_scrollTopButton, kLGScrollTopTintViewKey);
+    tintView.backgroundColor = LGCustomTintColorForKey(@"Preferences.GoToTop.CustomTintColor") ?: [UIColor colorWithWhite:1.0 alpha:0.10];
     BOOL glassEnabled = LGPreferencesGoToTopButtonEnabled();
     BOOL liveReady = [objc_getAssociatedObject(_scrollTopButton, kLGScrollTopLiveReadyKey) boolValue];
     glassView.hidden = !glassEnabled || !liveReady;

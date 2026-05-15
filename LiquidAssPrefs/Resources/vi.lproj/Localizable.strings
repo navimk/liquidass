@@ -7,6 +7,7 @@
 "prefs.control.glass_thickness" = "Độ dày kính";
 "prefs.control.light_tint_alpha" = "Mức phủ sáng";
 "prefs.control.dark_tint_alpha" = "Mức phủ tối";
+"prefs.control.custom_tint_color" = "Màu phủ tuỳ chỉnh";
 "prefs.control.refractive_index" = "Chiết suất";
 "prefs.control.refraction" = "Khúc xạ";
 "prefs.control.specular" = "Độ lóe sáng";
@@ -39,6 +40,7 @@
 "prefs.subtitle.glass_thickness" = "Chiều sâu của khối kính, nhìn thực tế thì không thay đổi nhiều.";
 "prefs.subtitle.light_tint_alpha" = "Độ mạnh của lớp phủ trắng ở giao diện sáng.";
 "prefs.subtitle.dark_tint_alpha" = "Độ mạnh của lớp phủ đen ở giao diện tối.";
+"prefs.subtitle.custom_tint_color" = "Màu hex RGB/RGBA. Để trống để dùng màu phủ sáng/tối.";
 "prefs.subtitle.refractive_index" = "Mật độ quang học của hiệu ứng kính.";
 "prefs.subtitle.refraction" = "Mức bẻ cong hậu cảnh qua lớp kính.";
 "prefs.subtitle.specular" = "Độ mạnh của vùng sáng trên kính.";

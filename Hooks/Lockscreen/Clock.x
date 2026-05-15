@@ -949,6 +949,9 @@ static UIImage *LGClockWallpaperSource(void) {
 }
 
 static UIColor *LGClockTintColorForView(UIView *view) {
+    UIColor *customTint = LGCustomTintColorForKey(@"Lockscreen.Clock.CustomTintColor");
+    if (customTint) return customTint;
+
     NSString *override = LG_prefString(@"Lockscreen.Clock.TintOverrideMode", LGTintOverrideLight);
     if ([override isEqualToString:LGTintOverrideDark]) {
         return [UIColor colorWithWhite:0.0 alpha:LGClockDarkTintAlpha()];
@@ -977,6 +980,9 @@ static UIColor *LGClockColorFromAttributedText(NSAttributedString *attributedTex
 }
 
 static UIColor *LGClockTintColorForSourceLabel(UILabel *label, UIView *fallbackView) {
+    UIColor *customTint = LGCustomTintColorForKey(@"Lockscreen.Clock.CustomTintColor");
+    if (customTint) return customTint;
+
     NSString *override = LG_prefString(@"Lockscreen.Clock.TintOverrideMode", LGTintOverrideLight);
     if ([override isEqualToString:LGTintOverrideDark]) {
         return [UIColor colorWithWhite:0.0 alpha:LGClockDarkTintAlpha()];
