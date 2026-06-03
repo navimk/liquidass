@@ -256,18 +256,33 @@ static void LGUpdateSettingsTopFadeForController(UIViewController *controller) {
         LGRemoveSettingsTopFadeForController(controller);
         return;
     }
+    
+    UIView *superview = controller.view.superview;
+    if (!superview || ![NSStringFromClass(superview.class) isEqualToString:@"UIViewControllerWrapperView"]) {
+        LGRemoveSettingsTopFadeForController(controller);
+        return;
+    }
+    
     LGApplySettingsNavigationBarAppearance(controller.navigationController.navigationBar);
+    UIView *targetView = controller.view;
+
     LGSettingsTopFadeView *fadeView = objc_getAssociatedObject(controller, kLGSettingsTopFadeViewKey);
     if (!fadeView) {
         fadeView = [[LGSettingsTopFadeView alloc] initWithFrame:CGRectZero];
-        fadeView.autoresizingMask = UIViewAutoresizingFlexibleWidth;
-        [controller.view addSubview:fadeView];
+        [targetView addSubview:fadeView];
         objc_setAssociatedObject(controller, kLGSettingsTopFadeViewKey, fadeView, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    } else if (fadeView.superview != targetView) {
+        [fadeView removeFromSuperview];
+        [targetView addSubview:fadeView];
     }
-    [controller.view bringSubviewToFront:fadeView];
+    [targetView bringSubviewToFront:fadeView];
     CGFloat topInset = controller.view.safeAreaInsets.top;
     CGFloat fadeHeight = MAX(60.0, topInset + 16.0);
-    fadeView.frame = CGRectMake(0.0, 0.0, CGRectGetWidth(controller.view.bounds), fadeHeight);
+    CGFloat yOffset = 0.0;
+    if ([targetView isKindOfClass:[UIScrollView class]]) {
+        yOffset = ((UIScrollView *)targetView).contentOffset.y;
+    }
+    fadeView.frame = CGRectMake(0.0, yOffset, CGRectGetWidth(targetView.bounds), fadeHeight);
 }
 
 static BOOL LGSettingsViewHasExactClassName(UIView *view, NSString *className) {
