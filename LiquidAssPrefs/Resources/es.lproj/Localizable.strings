@@ -102,7 +102,7 @@
 "prefs.font_style.current.title" = "Regular";
 "prefs.font_style.rounded.title" = "Rounded";
 "prefs.subtitle.global_enabled" = "Interruptor maestro para todas las superficies.";
-"prefs.root.runtime_cache_footer" = "%@ almacenado en RAM";
+"prefs.root.runtime_cache_footer" = "%@ en RAM";
 
 "prefs.rendering.snapshot.title" = "Instantánea";
 "prefs.rendering.live_capture.title" = "Captura en vivo";
@@ -196,7 +196,7 @@
 "prefs.surface.app_library.title" = "Biblioteca de apps";
 "prefs.surface.app_library.subtitle" = "Controles de cristal para superficies relacionadas con la Biblioteca de apps.";
 "prefs.misc.respring.title" = "Respring";
-"prefs.misc.respring.subtitle" = "Haz un respring después de cambios si estás en iOS 16 o posterior, ya que la actualización en vivo está rotA.";
+"prefs.misc.respring.subtitle" = "Haz un respring después de cambios si estás en iOS 16 o posterior, ya que la actualización en vivo está rota.";
 "prefs.misc.about.title" = "Más opciones";
 "prefs.misc.about.subtitle" = "Controles adicionales y preferencias avanzadas.";
 "prefs.misc.prefs_settings.title" = "Acerca de";
