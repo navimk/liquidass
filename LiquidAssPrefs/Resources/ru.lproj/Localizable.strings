@@ -173,8 +173,8 @@
 
 "prefs.hero.eyebrow" = "Нет ничего более отстойного, чем...";
 "prefs.hero.subtitle" = "Самый отстойный твик из когда-либо созданных.";
-"prefs.surface.homescreen.title" = "Экран "Домой"";
-"prefs.surface.homescreen.subtitle" = "Настройки стекла для элементов экрана "Домой".";
+"prefs.surface.homescreen.title" = "Экран \"Домой\"";
+"prefs.surface.homescreen.subtitle" = "Настройки стекла для элементов экрана \"Домой\".";
 "prefs.surface.lockscreen.title" = "Экран блокировки";
 "prefs.surface.lockscreen.subtitle" = "Настройки стекла для элементов экрана блокировки.";
 "prefs.section.lockscreen_notifications.title" = "Уведомления";
@@ -207,7 +207,7 @@
 "prefs.section.preferences.subtitle" = "Параметры, используемые этим интерфейсом настроек.";
 "prefs.misc.preferences_back_button.title" = "Кнопки навигации";
 "prefs.misc.preferences_back_button.subtitle" = "Использовать стекло для кнопок \"Назад\" и сброса в меню навигации.";
-"prefs.misc.preferences_go_to_top.title" = "Кнопка "Наверх"";
+"prefs.misc.preferences_go_to_top.title" = "Кнопка \"Наверх\"";
 "prefs.misc.preferences_go_to_top.subtitle" = "Использовать стекло для плавающей кнопки быстрого скролла вверх.";
 "prefs.misc.preferences_respring_bar.title" = "Панель респринга";
 "prefs.misc.preferences_respring_bar.subtitle" = "Использовать стекло для плавающего напоминания о респринге.";
@@ -222,7 +222,7 @@
 "prefs.misc.language.title" = "Язык";
 "prefs.misc.language.subtitle" = "Выберите язык для этого меню настроек.";
 "prefs.misc.app_library_composite.title" = "Захват иконок в Библиотеке";
-"prefs.misc.app_library_composite.subtitle" = "Также берёт образцы иконок экрана "Домой", а не только обоев в Библиотеке приложений.";
+"prefs.misc.app_library_composite.subtitle" = "Также берёт образцы иконок экрана \"Домой\", а не только обоев в Библиотеке приложений.";
 "prefs.misc.live_capture.title" = "Настройка живого захвата";
 "prefs.misc.live_capture.subtitle" = "Настройка частоты кадров живого захвата и качества текстуры.";
 "prefs.section.live_capture_general.title" = "Текстура захвата";
@@ -255,7 +255,7 @@
 "prefs.misc.import_export_section.title" = "Импорт/Экспорт настроек";
 "prefs.misc.import_export_section.subtitle" = "Поделитесь своей конфигурацией или восстановите её из файла JSON.";
 "prefs.misc.export_prefs.title" = "Экспорт настроек";
-"prefs.misc.export_prefs.subtitle" = "Экспортирует файл настроек в формате JSON и открывает системное меню "Поделиться".";
+"prefs.misc.export_prefs.subtitle" = "Экспортирует файл настроек в формате JSON и открывает системное меню \"Поделиться\".";
 "prefs.misc.import_prefs.title" = "Импорт настроек";
 "prefs.misc.import_prefs.subtitle" = "Импортирует файл настроек из формата JSON.";
 "prefs.misc.tint_override_per_surface.title" = "Переопределение оттенка поверхностей";
@@ -264,7 +264,7 @@
 "prefs.tint_override.light.title" = "Принудительный светлый оттенок";
 "prefs.tint_override.dark.title" = "Принудительный тёмный оттенок";
 "prefs.misc.settings_controls.title" = "Настройки iOS 26";
-"prefs.misc.settings_controls.subtitle" = "Пытается воссоздать интерфейс приложения "Настройки" из iOS 26.";
+"prefs.misc.settings_controls.subtitle" = "Пытается воссоздать интерфейс приложения \"Настройки\" из iOS 26.";
 "prefs.misc.custom_views.title" = "Кастомные элементы (Расширенно)";
 "prefs.misc.custom_views.subtitle" = "Внедряет стеклянный эффект в элементы (views), соответствующие правилам иерархии классов.";
 "prefs.custom_views.general.title" = "Общие";
