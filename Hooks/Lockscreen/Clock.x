@@ -463,6 +463,32 @@ static CTFontRef LGClockLegacyVariableCTFontForHeight(CGFloat pointSize, CGFloat
     return LGClockCreateVariableCTFontForHeight(pointSize, heightValue);
 }
 
+@interface MRUArtworkView : UIView
+@end
+
+static BOOL LGIsLockscreenArtworkExpandedInWindow(UIWindow *window) {
+    if (!window) return NO;
+    __block BOOL expanded = NO;
+    LGTraverseViews(window, ^(UIView *view) {
+        if (expanded) return;
+        NSString *className = NSStringFromClass(view.class);
+        if ([className isEqualToString:@"MRUArtworkView"]) {
+            CGRect bounds = view.bounds;
+            if (bounds.size.width > 150.0 && bounds.size.height > 150.0 && view.window != nil && !view.hidden && view.alpha > 0.01) {
+                expanded = YES;
+            }
+        }
+    });
+    return expanded;
+}
+
+static CGFloat LGClockGetVariableFontSizeScaleForWindow(UIWindow *window) {
+    if (LGIsLockscreenArtworkExpandedInWindow(window)) {
+        return 1.0;
+    }
+    return LGClockVariableFontSizeScale();
+}
+
 static BOOL LGIsModernClockHost(UIView *view) {
     static Class cls;
     if (!cls) cls = NSClassFromString(@"CSProminentTimeView");
@@ -913,16 +939,17 @@ static void LGClockSetCoverSheetVisible(BOOL visible) {
 static UIFont *LGClockPreferredRenderFont(UILabel *label, UIView *host) {
     UIFont *sourceFont = label.font ?: [UIFont systemFontOfSize:84.0 weight:UIFontWeightBold];
     CGFloat pointSize = sourceFont.pointSize;
+    CGFloat scale = LGClockGetVariableFontSizeScaleForWindow(host.window ?: label.window);
     if (LGIsLegacyClockHost(host)) {
         if (LGClockLegacyUsesVariableFont()) {
-            pointSize = MAX(sourceFont.pointSize * LGClockVariableFontSizeScale(), 1.0);
+            pointSize = MAX(sourceFont.pointSize * scale, 1.0);
             UIFont *variableFont = LGClockLegacyVariableFont(pointSize);
             if (variableFont) return variableFont;
         } else {
             pointSize = MAX(sourceFont.pointSize * LGClockLegacySizeBoost(), 58.0);
         }
     } else if (LGClockVariableFontEnabled()) {
-        pointSize = MAX(sourceFont.pointSize * LGClockVariableFontSizeScale(), 1.0);
+        pointSize = MAX(sourceFont.pointSize * scale, 1.0);
         UIFont *variableFont = LGClockVariableFont(pointSize);
         if (variableFont) return variableFont;
     }
@@ -1495,9 +1522,10 @@ static CGFloat LGClockDynamicHeightAxisForContext(UILabel *label,
     if (nearestTop == CGFLOAT_MAX) return requestedHeight;
 
     UIFont *sourceFont = label.font ?: [UIFont systemFontOfSize:84.0 weight:UIFontWeightBold];
+    CGFloat scale = LGClockGetVariableFontSizeScaleForWindow(host.window ?: label.window ?: container.window);
     CGFloat pointSize = modernHost
-        ? MAX(sourceFont.pointSize * LGClockVariableFontSizeScale(), 1.0)
-        : MAX(sourceFont.pointSize * LGClockVariableFontSizeScale(), 1.0);
+        ? MAX(sourceFont.pointSize * scale, 1.0)
+        : MAX(sourceFont.pointSize * scale, 1.0);
     static const CGFloat kClockBottomClearance = 10.0;
 
     CTFontRef requestedCTFont = modernHost
@@ -2049,8 +2077,9 @@ static UIView *LGClockOverlayContainerForHost(UIView *host) {
         sourceFrame = LGClockOffsetFrame(sourceFrame);
         UIFont *sourceFont = desiredSourceFont;
         BOOL useVariableFont = LGClockLegacyUsesVariableFont();
+        CGFloat scale = LGClockGetVariableFontSizeScaleForWindow(host.window ?: label.window);
         CGFloat pointSize = useVariableFont
-            ? MAX(sourceFont.pointSize * LGClockVariableFontSizeScale(), 1.0)
+            ? MAX(sourceFont.pointSize * scale, 1.0)
             : MAX(sourceFont.pointSize * LGClockLegacySizeBoost(), 58.0);
         CGFloat dynamicHeight = useVariableFont
             ? LGClockDynamicHeightAxisForContext(label, host, container, sourceFrame)
@@ -2084,7 +2113,8 @@ static UIView *LGClockOverlayContainerForHost(UIView *host) {
             desiredNearestNotificationTop = LGClockSnapScalar(desiredNearestNotificationTop,
                                                               kLGClockModernGeometrySnapStep);
         }
-        CGFloat pointSize = MAX(sourceFont.pointSize * LGClockVariableFontSizeScale(), 1.0);
+        CGFloat scale = LGClockGetVariableFontSizeScaleForWindow(host.window ?: label.window);
+        CGFloat pointSize = MAX(sourceFont.pointSize * scale, 1.0);
         CGFloat dynamicHeight = LGClockDynamicHeightAxisForContext(label, host, container, sourceFrame);
         desiredDynamicHeightAxis = dynamicHeight;
         CTFontRef renderCTFont = LGClockVariableCTFontForHeight(pointSize, dynamicHeight);
@@ -2900,6 +2930,31 @@ void LGRefreshAllClockHosts(void) {
         UIView *host = self.superview;
         while (host && !LGIsClockHost(host)) host = host.superview;
         if (host) LGRequestClockApplyForSourceMutation(host);
+    }
+}
+
+%hook MRUArtworkView
+
+- (void)layoutSubviews {
+    %orig;
+    UIWindow *window = self.window;
+    if (!window) return;
+    
+    NSNumber *lastStateNum = objc_getAssociatedObject(self, @selector(layoutSubviews));
+    BOOL lastState = lastStateNum ? [lastStateNum boolValue] : NO;
+    
+    CGRect bounds = self.bounds;
+    BOOL isExpanded = (bounds.size.width > 150.0 && bounds.size.height > 150.0 && !self.hidden && self.alpha > 0.01);
+    
+    if (!lastStateNum || lastState != isExpanded) {
+        objc_setAssociatedObject(self, @selector(layoutSubviews), @(isExpanded), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        
+        NSString *windowClass = NSStringFromClass(window.class);
+        if ([windowClass containsString:@"CoverSheet"] || [windowClass containsString:@"Secure"] || [windowClass containsString:@"Window"]) {
+            dispatch_async(dispatch_get_main_queue(), ^{
+                LGRefreshAllClockHosts();
+            });
+        }
     }
 }
 
